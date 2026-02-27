@@ -1,7 +1,7 @@
 # NovaLang Toolchain Bootstrap
 
 This repository contains an ANTLR4 grammar (`nova.g4`) for the NovaLang surface
-syntax and now includes a C-based toolchain prototype. The codebase covers
+syntax and now includes a C++-based toolchain prototype. The codebase covers
 lexing, parsing, semantic analysis with type inference and effect tracking, a
 typed intermediate representation, native code generation, and lightweight
 developer tooling.
@@ -13,22 +13,22 @@ developer tooling.
 * `scripts/generate_tokens.py` — lightweight generator that extracts token
   metadata from `nova.g4` and emits `include/nova/generated_tokens.h`, ensuring
   the handwritten lexer stays aligned with the grammar.
-* `include/` & `src/` — C headers and implementations for:
-  * Token infrastructure (`nova/token.h`, `src/token.c`).
-  * Lexer (`nova/lexer.h`, `src/lexer.c`) translating NovaLang source into a
+* `include/` & `src/` — C++ headers and implementations for:
+  * Token infrastructure (`nova/token.h`, `src/token.cpp`).
+  * Lexer (`nova/lexer.h`, `src/lexer.cpp`) translating NovaLang source into a
     stream of `NovaToken` structures.
-  * Expanded AST data structures (`nova/ast.h`, `src/ast.c`) that faithfully
+  * Expanded AST data structures (`nova/ast.h`, `src/ast.cpp`) that faithfully
     capture variants, match arms, pipelines, async/await, blocks, and literal
     forms described in `nova.g4`.
-  * A fault-tolerant recursive-descent parser (`nova/parser.h`, `src/parser.c`)
+  * A fault-tolerant recursive-descent parser (`nova/parser.h`, `src/parser.cpp`)
     with diagnostics and recovery that mirrors the grammar and produces a
     `NovaProgram` tree.
-  * A richer semantic analysis engine (`nova/semantic.h`, `src/semantic.c`)
+  * A richer semantic analysis engine (`nova/semantic.h`, `src/semantic.cpp`)
     featuring scope management, type inference, effect tracking, variant
     exhaustiveness checking, and per-expression type/effect metadata.
-  * A typed intermediate representation (`nova/ir.h`, `src/ir.c`) lowered from
+  * A typed intermediate representation (`nova/ir.h`, `src/ir.cpp`) lowered from
     the AST with help from semantic results.
-  * A native code generator (`nova/codegen.h`, `src/codegen.c`) that emits C
+  * A native code generator (`nova/codegen.h`, `src/codegen.cpp`) that emits C
     and drives the system compiler to produce object files.
 * Developer tooling under `tools/`:
   * `nova-fmt` — simple formatter that reflows NovaLang source while validating
@@ -43,15 +43,14 @@ developer tooling.
   semantics.
 * `examples/` — small NovaLang programs that exercise pipelines, matches, and
   loops.
-* `tests/parser_tests.c` — end-to-end tests that cover parsing, semantics,
+* `tests/parser_tests.cpp` — end-to-end tests that cover parsing, semantics,
   exhaustiveness warnings, IR generation, and native code emission.
-* `Makefile` — builds tests and developer tools with `gcc`.
+* `Makefile` — builds tests and developer tools with `g++` and includes a `test` target.
 
 ## Running the Tests
 
 ```
-make
-./build/tests
+make test
 ```
 
 You can also validate a single source file with the stability checker:

@@ -111,14 +111,14 @@ static long nova_process_id(void) {
 #endif
 }
 
-static char *make_temp_dir(char *template) {
-    size_t len = strlen(template);
-    char *x_start = strchr(template, 'X');
+static char *make_temp_dir(char *dir_template) {
+    size_t len = strlen(dir_template);
+    char *x_start = strchr(dir_template, 'X');
     if (!x_start) {
         errno = EINVAL;
         return NULL;
     }
-    size_t x_count = len - (size_t)(x_start - template);
+    size_t x_count = len - (size_t)(x_start - dir_template);
     static unsigned long counter = 0;
     for (int attempt = 0; attempt < 4096; ++attempt) {
         unsigned long value = (unsigned long)nova_process_id() + counter + (unsigned long)attempt;
@@ -127,9 +127,9 @@ static char *make_temp_dir(char *template) {
             value /= 36;
             x_start[i] = (digit < 10) ? (char)('0' + digit) : (char)('a' + (digit - 10));
         }
-        if (nova_mkdir(template, 0700) == 0) {
+        if (nova_mkdir(dir_template, 0700) == 0) {
             counter += (unsigned long)(attempt + 1);
-            return template;
+            return dir_template;
         }
         if (errno != EEXIST) {
             return NULL;
@@ -322,8 +322,8 @@ static void test_ir_control_flow_optimizations(void) {
 }
 
 static void test_project_generator(void) {
-    char template[] = "build/nova_projXXXXXX";
-    char *project_dir = make_temp_dir(template);
+    char dir_template[] = "build/nova_projXXXXXX";
+    char *project_dir = make_temp_dir(dir_template);
     assert(project_dir != NULL);
 
     char command[PATH_MAX * 2];
@@ -427,8 +427,8 @@ static void test_while_loop_codegen(void) {
 }
 
 static void test_stability_checker_cli(void) {
-    char template[] = "build/nova_checkXXXXXX";
-    char *check_dir = make_temp_dir(template);
+    char dir_template[] = "build/nova_checkXXXXXX";
+    char *check_dir = make_temp_dir(dir_template);
     assert(check_dir != NULL);
 
     char source_path[PATH_MAX];

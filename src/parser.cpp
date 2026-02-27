@@ -538,19 +538,30 @@ static NovaDecl parse_decl(NovaParser *parser) {
     NovaToken token = peek(parser);
     if (token.type == NOVA_TOKEN_TYPE) {
         NovaTypeDecl type_decl = parse_type_decl(parser);
-        return (NovaDecl){ .kind = NOVA_DECL_TYPE, .as.type_decl = type_decl };
+        NovaDecl decl{};
+        decl.kind = NOVA_DECL_TYPE;
+        decl.as.type_decl = type_decl;
+        return decl;
     }
     if (token.type == NOVA_TOKEN_FUN) {
         NovaFunDecl fun_decl = parse_fun_decl(parser);
-        return (NovaDecl){ .kind = NOVA_DECL_FUN, .as.fun_decl = fun_decl };
+        NovaDecl decl{};
+        decl.kind = NOVA_DECL_FUN;
+        decl.as.fun_decl = fun_decl;
+        return decl;
     }
     if (token.type == NOVA_TOKEN_LET) {
         NovaLetDecl let_decl = parse_let_decl(parser);
-        return (NovaDecl){ .kind = NOVA_DECL_LET, .as.let_decl = let_decl };
+        NovaDecl decl{};
+        decl.kind = NOVA_DECL_LET;
+        decl.as.let_decl = let_decl;
+        return decl;
     }
     parser_error(parser, token, "unexpected top-level declaration");
     synchronize(parser);
-    return (NovaDecl){ .kind = NOVA_DECL_LET };
+    NovaDecl decl{};
+    decl.kind = NOVA_DECL_LET;
+    return decl;
 }
 
 void nova_parser_init(NovaParser *parser, const char *source) {

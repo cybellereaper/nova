@@ -279,7 +279,7 @@ static NovaIRExpr *lower_expr(const NovaExpr *expr, const NovaSemanticContext *s
         return lower_if(expr, semantics);
     case NOVA_EXPR_WHILE:
         return lower_while(expr, semantics);
-    case NOVA_EXPR_BLOCK:
+    case NOVA_EXPR_BLOCK: {
         if (expr->as.block.expressions.count == 0) {
             return nova_ir_expr_new(NOVA_IR_EXPR_UNIT, semantics->type_unit);
         }
@@ -304,6 +304,7 @@ static NovaIRExpr *lower_expr(const NovaExpr *expr, const NovaSemanticContext *s
             }
         }
         return sequence;
+    }
     case NOVA_EXPR_PAREN:
         return lower_expr(expr->as.inner, semantics);
     case NOVA_EXPR_MATCH:
