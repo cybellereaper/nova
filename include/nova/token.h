@@ -58,6 +58,7 @@ typedef struct {
 } NovaTokenArray;
 
 void nova_token_array_init(NovaTokenArray *array);
+bool nova_token_array_reserve(NovaTokenArray *array, size_t capacity);
 void nova_token_array_push(NovaTokenArray *array, NovaToken token);
 void nova_token_array_free(NovaTokenArray *array);
 

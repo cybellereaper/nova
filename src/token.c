@@ -1,5 +1,7 @@
 #include "nova/token.h"
 
+#include <limits.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -9,15 +11,28 @@ void nova_token_array_init(NovaTokenArray *array) {
     array->capacity = 0;
 }
 
+bool nova_token_array_reserve(NovaTokenArray *array, size_t capacity) {
+    if (capacity <= array->capacity) {
+        return true;
+    }
+    if (capacity > (SIZE_MAX / sizeof(NovaToken))) {
+        return false;
+    }
+    NovaToken *new_data = (NovaToken *)realloc(array->data, capacity * sizeof(NovaToken));
+    if (!new_data) {
+        return false;
+    }
+    array->data = new_data;
+    array->capacity = capacity;
+    return true;
+}
+
 void nova_token_array_push(NovaTokenArray *array, NovaToken token) {
     if (array->size == array->capacity) {
         size_t new_capacity = array->capacity == 0 ? 16 : array->capacity * 2;
-        NovaToken *new_data = (NovaToken *)realloc(array->data, new_capacity * sizeof(NovaToken));
-        if (!new_data) {
+        if (new_capacity < array->capacity || !nova_token_array_reserve(array, new_capacity)) {
             return;
         }
-        array->data = new_data;
-        array->capacity = new_capacity;
     }
     array->data[array->size++] = token;
 }

@@ -5,24 +5,28 @@
 #include <string.h>
 
 static bool nova_match_keyword(const char *lexeme, size_t length, NovaTokenType *type) {
-    struct Keyword { const char *text; NovaTokenType type; };
+    struct Keyword {
+        const char *text;
+        size_t length;
+        NovaTokenType type;
+    };
     static const struct Keyword keywords[] = {
-        {"module", NOVA_TOKEN_MODULE},
-        {"import", NOVA_TOKEN_IMPORT},
-        {"fun", NOVA_TOKEN_FUN},
-        {"let", NOVA_TOKEN_LET},
-        {"type", NOVA_TOKEN_TYPE},
-        {"if", NOVA_TOKEN_IF},
-        {"while", NOVA_TOKEN_WHILE},
-        {"else", NOVA_TOKEN_ELSE},
-        {"match", NOVA_TOKEN_MATCH},
-        {"async", NOVA_TOKEN_ASYNC},
-        {"await", NOVA_TOKEN_AWAIT},
-        {"true", NOVA_TOKEN_TRUE},
-        {"false", NOVA_TOKEN_FALSE},
+        {"module", sizeof("module") - 1, NOVA_TOKEN_MODULE},
+        {"import", sizeof("import") - 1, NOVA_TOKEN_IMPORT},
+        {"fun", sizeof("fun") - 1, NOVA_TOKEN_FUN},
+        {"let", sizeof("let") - 1, NOVA_TOKEN_LET},
+        {"type", sizeof("type") - 1, NOVA_TOKEN_TYPE},
+        {"if", sizeof("if") - 1, NOVA_TOKEN_IF},
+        {"while", sizeof("while") - 1, NOVA_TOKEN_WHILE},
+        {"else", sizeof("else") - 1, NOVA_TOKEN_ELSE},
+        {"match", sizeof("match") - 1, NOVA_TOKEN_MATCH},
+        {"async", sizeof("async") - 1, NOVA_TOKEN_ASYNC},
+        {"await", sizeof("await") - 1, NOVA_TOKEN_AWAIT},
+        {"true", sizeof("true") - 1, NOVA_TOKEN_TRUE},
+        {"false", sizeof("false") - 1, NOVA_TOKEN_FALSE},
     };
     for (size_t i = 0; i < sizeof(keywords) / sizeof(keywords[0]); ++i) {
-        if (strlen(keywords[i].text) == length && strncmp(keywords[i].text, lexeme, length) == 0) {
+        if (keywords[i].length == length && strncmp(keywords[i].text, lexeme, length) == 0) {
             *type = keywords[i].type;
             return true;
         }
@@ -135,12 +139,12 @@ static NovaToken lex_number(NovaLexer *lexer) {
     size_t start_pos = lexer->position;
     size_t line = lexer->line;
     size_t column = lexer->column;
-    while (isdigit(peek(lexer))) {
+    while (isdigit((unsigned char)peek(lexer))) {
         advance(lexer);
     }
     if (peek(lexer) == '.') {
         advance(lexer);
-        while (isdigit(peek(lexer))) {
+        while (isdigit((unsigned char)peek(lexer))) {
             advance(lexer);
         }
     }
@@ -152,7 +156,7 @@ static NovaToken lex_identifier(NovaLexer *lexer) {
     size_t start_pos = lexer->position;
     size_t line = lexer->line;
     size_t column = lexer->column;
-    while (isalnum(peek(lexer)) || peek(lexer) == '_') {
+    while (isalnum((unsigned char)peek(lexer)) || peek(lexer) == '_') {
         advance(lexer);
     }
     size_t length = lexer->position - start_pos;
@@ -172,10 +176,10 @@ NovaToken nova_lexer_next(NovaLexer *lexer) {
     if (c == '\0') {
         return make_token(lexer, NOVA_TOKEN_EOF, start, 0, line, column);
     }
-    if (isalpha(c) || c == '_') {
+    if (isalpha((unsigned char)c) || c == '_') {
         return lex_identifier(lexer);
     }
-    if (isdigit(c)) {
+    if (isdigit((unsigned char)c)) {
         return lex_number(lexer);
     }
     switch (c) {
@@ -228,6 +232,8 @@ NovaTokenArray nova_lexer_tokenize(const char *source) {
     NovaLexer lexer;
     size_t length = strlen(source);
     nova_lexer_init(&lexer, source, length);
+    size_t estimated_tokens = (length / 4) + 8;
+    (void)nova_token_array_reserve(&array, estimated_tokens);
     while (true) {
         NovaToken token = nova_lexer_next(&lexer);
         nova_token_array_push(&array, token);
