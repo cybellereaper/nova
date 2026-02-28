@@ -1,11 +1,13 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <limits.h>
 #include <errno.h>
+#include <time.h>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -137,6 +139,110 @@ static char *make_temp_dir(char *template) {
     }
     errno = EEXIST;
     return NULL;
+}
+
+
+static bool append_text(char **buffer, size_t *capacity, size_t *used, const char *text) {
+    size_t len = strlen(text);
+    if (*used + len + 1 > *capacity) {
+        size_t next = *capacity == 0 ? 256 : *capacity;
+        while (*used + len + 1 > next) {
+            next *= 2;
+        }
+        char *grown = realloc(*buffer, next);
+        if (!grown) {
+            return false;
+        }
+        *buffer = grown;
+        *capacity = next;
+    }
+    memcpy(*buffer + *used, text, len);
+    *used += len;
+    (*buffer)[*used] = '\0';
+    return true;
+}
+
+static bool append_fmt(char **buffer, size_t *capacity, size_t *used, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int needed = vsnprintf(NULL, 0, fmt, args);
+    va_end(args);
+    if (needed < 0) {
+        va_end(args_copy);
+        return false;
+    }
+    size_t needed_size = (size_t)needed;
+    if (*used + needed_size + 1 > *capacity) {
+        size_t next = *capacity == 0 ? 256 : *capacity;
+        while (*used + needed_size + 1 > next) {
+            next *= 2;
+        }
+        char *grown = realloc(*buffer, next);
+        if (!grown) {
+            va_end(args_copy);
+            return false;
+        }
+        *buffer = grown;
+        *capacity = next;
+    }
+    int wrote = vsnprintf(*buffer + *used, *capacity - *used, fmt, args_copy);
+    va_end(args_copy);
+    if (wrote < 0) {
+        return false;
+    }
+    *used += (size_t)wrote;
+    return true;
+}
+
+static char *build_mock_stress_program(size_t function_count, size_t pipeline_depth) {
+    size_t capacity = 0;
+    size_t used = 0;
+    char *source = NULL;
+
+    if (!append_text(&source, &capacity, &used, "module demo.stress\nfun id(x: Number): Number = x\n")) {
+        free(source);
+        return NULL;
+    }
+
+    for (size_t i = 0; i < function_count; ++i) {
+        if (!append_fmt(&source, &capacity, &used, "fun run_%zu(): Number = %zu", i, i + 1)) {
+            free(source);
+            return NULL;
+        }
+        for (size_t stage = 0; stage < pipeline_depth; ++stage) {
+            if (!append_text(&source, &capacity, &used, " |> id")) {
+                free(source);
+                return NULL;
+            }
+        }
+        if (!append_text(&source, &capacity, &used, "\n")) {
+            free(source);
+            return NULL;
+        }
+    }
+    return source;
+}
+
+
+static void test_mock_program_builder(void) {
+    char *source = build_mock_stress_program(3, 2);
+    assert(source != NULL);
+    assert(strstr(source, "module demo.stress") != NULL);
+    assert(strstr(source, "fun run_0(): Number = 1 |> id |> id") != NULL);
+    assert(strstr(source, "fun run_2(): Number = 3 |> id |> id") != NULL);
+
+    NovaParser parser;
+    nova_parser_init(&parser, source);
+    NovaProgram *program = nova_parser_parse(&parser);
+    assert(program != NULL);
+    assert(program->decl_count == 4);
+
+    nova_program_free(program);
+    free(program);
+    nova_parser_free(&parser);
+    free(source);
 }
 
 static void test_parser_and_semantics(void) {
@@ -448,6 +554,69 @@ static void test_stability_checker_cli(void) {
     system(cleanup_cmd);
 }
 
+
+static void test_mocked_semantic_stability_workload(void) {
+    char *source = build_mock_stress_program(120, 24);
+    assert(source != NULL);
+
+    NovaParser parser;
+    nova_parser_init(&parser, source);
+    NovaProgram *program = nova_parser_parse(&parser);
+    assert(program != NULL);
+
+    NovaSemanticContext ctx;
+    nova_semantic_context_init(&ctx);
+    nova_semantic_analyze_program(&ctx, program);
+    assert(ctx.diagnostics.count == 0);
+
+    for (size_t i = 1; i < program->decl_count; ++i) {
+        const NovaFunDecl *fun = &program->decls[i].as.fun_decl;
+        for (size_t repeat = 0; repeat < 40; ++repeat) {
+            const NovaExprInfo *info = nova_semantic_lookup_expr(&ctx, fun->body);
+            assert(info != NULL);
+            assert(info->type == ctx.type_number);
+        }
+    }
+
+    nova_semantic_context_free(&ctx);
+    nova_program_free(program);
+    free(program);
+    nova_parser_free(&parser);
+    free(source);
+}
+
+static void test_performance_regression_smoke(void) {
+    char *source = build_mock_stress_program(220, 18);
+    assert(source != NULL);
+
+    clock_t start = clock();
+    for (size_t run = 0; run < 8; ++run) {
+        NovaParser parser;
+        nova_parser_init(&parser, source);
+        NovaProgram *program = nova_parser_parse(&parser);
+        assert(program != NULL);
+
+        NovaSemanticContext ctx;
+        nova_semantic_context_init(&ctx);
+        nova_semantic_analyze_program(&ctx, program);
+        assert(ctx.diagnostics.count == 0);
+
+        const NovaFunDecl *last_fun = &program->decls[program->decl_count - 1].as.fun_decl;
+        const NovaExprInfo *info = nova_semantic_lookup_expr(&ctx, last_fun->body);
+        assert(info != NULL);
+
+        nova_semantic_context_free(&ctx);
+        nova_program_free(program);
+        free(program);
+        nova_parser_free(&parser);
+    }
+    clock_t end = clock();
+    double elapsed_ms = ((double)(end - start) * 1000.0) / (double)CLOCKS_PER_SEC;
+    printf("performance smoke: %.2fms\n", elapsed_ms);
+
+    free(source);
+}
+
 static void test_examples(void) {
     struct ExampleCheck {
         const char *path;
@@ -467,6 +636,7 @@ static void test_examples(void) {
 }
 
 int main(void) {
+    test_mock_program_builder();
     test_parser_and_semantics();
     test_match_exhaustiveness_warning();
     test_codegen_pipeline();
@@ -475,6 +645,8 @@ int main(void) {
     test_while_loop_codegen();
     test_project_generator();
     test_stability_checker_cli();
+    test_mocked_semantic_stability_workload();
+    test_performance_regression_smoke();
     test_examples();
     printf("All tests passed.\n");
     return 0;

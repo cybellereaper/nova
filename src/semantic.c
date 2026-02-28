@@ -1,6 +1,7 @@
 #include "nova/semantic.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -81,6 +82,99 @@ static void expr_info_list_init(NovaExprInfoList *list) {
     list->capacity = 0;
 }
 
+static size_t expr_hash(const NovaExpr *expr) {
+    size_t value = (size_t)expr;
+    return value >> 4;
+}
+
+#define NOVA_EXPR_INDEX_MISSING SIZE_MAX
+
+static bool expr_index_reserve(NovaSemanticContext *ctx, size_t required_capacity) {
+    if (ctx->expr_index_capacity >= required_capacity) {
+        return true;
+    }
+    size_t new_capacity = ctx->expr_index_capacity == 0 ? 32 : ctx->expr_index_capacity;
+    while (new_capacity < required_capacity) {
+        new_capacity *= 2;
+    }
+
+    const NovaExpr **new_keys = calloc(new_capacity, sizeof(NovaExpr *));
+    if (!new_keys) {
+        return false;
+    }
+    size_t *new_values = malloc(new_capacity * sizeof(size_t));
+    if (!new_values) {
+        free(new_keys);
+        return false;
+    }
+
+    if (ctx->expr_index_keys && ctx->expr_index_values) {
+        for (size_t i = 0; i < ctx->expr_index_capacity; ++i) {
+            const NovaExpr *expr = ctx->expr_index_keys[i];
+            if (!expr) {
+                continue;
+            }
+            size_t slot = expr_hash(expr) & (new_capacity - 1);
+            while (new_keys[slot]) {
+                slot = (slot + 1) & (new_capacity - 1);
+            }
+            new_keys[slot] = expr;
+            new_values[slot] = ctx->expr_index_values[i];
+        }
+    }
+
+    free(ctx->expr_index_keys);
+    free(ctx->expr_index_values);
+    ctx->expr_index_keys = new_keys;
+    ctx->expr_index_values = new_values;
+    ctx->expr_index_capacity = new_capacity;
+    return true;
+}
+
+static bool expr_index_insert(NovaSemanticContext *ctx, const NovaExpr *expr, size_t value_index) {
+    size_t required = (ctx->expr_index_count + 1) * 10 / 7 + 1;
+    if (!expr_index_reserve(ctx, required)) {
+        return false;
+    }
+    size_t slot = expr_hash(expr) & (ctx->expr_index_capacity - 1);
+    while (ctx->expr_index_keys[slot] && ctx->expr_index_keys[slot] != expr) {
+        slot = (slot + 1) & (ctx->expr_index_capacity - 1);
+    }
+    if (!ctx->expr_index_keys[slot]) {
+        ctx->expr_index_count++;
+    }
+    ctx->expr_index_keys[slot] = expr;
+    ctx->expr_index_values[slot] = value_index;
+    return true;
+}
+
+static size_t expr_index_lookup(const NovaSemanticContext *ctx, const NovaExpr *expr) {
+    if (!ctx->expr_index_keys || ctx->expr_index_capacity == 0) {
+        return NOVA_EXPR_INDEX_MISSING;
+    }
+    size_t slot = expr_hash(expr) & (ctx->expr_index_capacity - 1);
+    for (size_t i = 0; i < ctx->expr_index_capacity; ++i) {
+        const NovaExpr *key = ctx->expr_index_keys[slot];
+        if (!key) {
+            return NOVA_EXPR_INDEX_MISSING;
+        }
+        if (key == expr) {
+            return ctx->expr_index_values[slot];
+        }
+        slot = (slot + 1) & (ctx->expr_index_capacity - 1);
+    }
+    return NOVA_EXPR_INDEX_MISSING;
+}
+
+static size_t expr_info_list_linear_lookup(const NovaExprInfoList *list, const NovaExpr *expr) {
+    for (size_t i = 0; i < list->count; ++i) {
+        if (list->items[i].expr == expr) {
+            return i;
+        }
+    }
+    return NOVA_EXPR_INDEX_MISSING;
+}
+
 static void expr_info_list_free(NovaExprInfoList *list) {
     free(list->items);
     list->items = NULL;
@@ -88,14 +182,20 @@ static void expr_info_list_free(NovaExprInfoList *list) {
     list->capacity = 0;
 }
 
-static void expr_info_list_record(NovaExprInfoList *list, const NovaExpr *expr, NovaTypeId type, NovaEffectMask effects) {
-    for (size_t i = 0; i < list->count; ++i) {
-        if (list->items[i].expr == expr) {
-            list->items[i].type = type;
-            list->items[i].effects = effects;
-            return;
-        }
+static void expr_info_list_record(NovaSemanticContext *ctx, const NovaExpr *expr, NovaTypeId type, NovaEffectMask effects) {
+    size_t existing = expr_index_lookup(ctx, expr);
+    if (existing == NOVA_EXPR_INDEX_MISSING) {
+        existing = expr_info_list_linear_lookup(&ctx->expr_info, expr);
     }
+    if (existing != NOVA_EXPR_INDEX_MISSING) {
+        ctx->expr_info.items[existing].type = type;
+        ctx->expr_info.items[existing].effects = effects;
+        if (ctx->expr_index_capacity > 0) {
+            expr_index_insert(ctx, expr, existing);
+        }
+        return;
+    }
+    NovaExprInfoList *list = &ctx->expr_info;
     if (list->count == list->capacity) {
         size_t new_capacity = list->capacity == 0 ? 16 : list->capacity * 2;
         NovaExprInfo *items = realloc(list->items, new_capacity * sizeof(NovaExprInfo));
@@ -105,7 +205,9 @@ static void expr_info_list_record(NovaExprInfoList *list, const NovaExpr *expr, 
         list->items = items;
         list->capacity = new_capacity;
     }
+    size_t index = list->count;
     list->items[list->count++] = (NovaExprInfo){ .expr = expr, .type = type, .effects = effects };
+    (void)expr_index_insert(ctx, expr, index);
 }
 
 static void type_record_list_init(NovaTypeRecordList *list) {
@@ -294,7 +396,7 @@ static NovaTypeId analyze_block(NovaSemanticContext *ctx, NovaScope *scope, cons
     }
     scope_free(inner);
     if (out_effects) *out_effects |= effects;
-    expr_info_list_record(&ctx->expr_info, expr, type, effects);
+    expr_info_list_record(ctx, expr, type, effects);
     return type;
 }
 
@@ -328,7 +430,7 @@ static NovaTypeId analyze_literal(NovaSemanticContext *ctx, NovaScope *scope, co
     }
     }
     if (out_effects) *out_effects |= effects;
-    expr_info_list_record(&ctx->expr_info, expr, type, effects);
+    expr_info_list_record(ctx, expr, type, effects);
     return type;
 }
 
@@ -336,11 +438,11 @@ static NovaTypeId analyze_identifier(NovaSemanticContext *ctx, NovaScope *scope,
     NovaScopeEntry *entry = scope_lookup(scope, &expr->as.identifier.name);
     if (!entry) {
         diagnostics_error(ctx, expr->as.identifier.name, "undefined identifier");
-        expr_info_list_record(&ctx->expr_info, expr, ctx->type_unknown, NOVA_EFFECT_NONE);
+        expr_info_list_record(ctx, expr, ctx->type_unknown, NOVA_EFFECT_NONE);
         return ctx->type_unknown;
     }
     if (out_effects) *out_effects |= entry->effects;
-    expr_info_list_record(&ctx->expr_info, expr, entry->type, entry->effects);
+    expr_info_list_record(ctx, expr, entry->type, entry->effects);
     return entry->type;
 }
 
@@ -352,7 +454,7 @@ static NovaTypeId analyze_call(NovaSemanticContext *ctx, NovaScope *scope, const
     NovaTypeInfo callee_info = ctx->types[callee_type];
     if (callee_info.kind != NOVA_TYPE_KIND_FUNCTION) {
         diagnostics_error(ctx, callee_expr->start_token, "attempted to call a non-function value");
-        expr_info_list_record(&ctx->expr_info, expr, ctx->type_unknown, effects);
+        expr_info_list_record(ctx, expr, ctx->type_unknown, effects);
         if (out_effects) *out_effects |= effects;
         return ctx->type_unknown;
     }
@@ -370,7 +472,7 @@ static NovaTypeId analyze_call(NovaSemanticContext *ctx, NovaScope *scope, const
     }
     effects |= callee_info.as.function.effects;
     NovaTypeId result = callee_info.as.function.result;
-    expr_info_list_record(&ctx->expr_info, expr, result, effects);
+    expr_info_list_record(ctx, expr, result, effects);
     if (out_effects) *out_effects |= effects;
     return result;
 }
@@ -393,7 +495,7 @@ static NovaTypeId analyze_pipeline(NovaSemanticContext *ctx, NovaScope *scope, c
             diagnostics_error(ctx, stage->start_token, "pipeline stage is not callable");
             current_type = ctx->type_unknown;
             total_effects |= stage_effects;
-            expr_info_list_record(&ctx->expr_info, stage, current_type, total_effects);
+            expr_info_list_record(ctx, stage, current_type, total_effects);
             continue;
         }
         size_t total_args = args.count + 1;
@@ -412,9 +514,9 @@ static NovaTypeId analyze_pipeline(NovaSemanticContext *ctx, NovaScope *scope, c
         stage_effects |= callee_info.as.function.effects;
         current_type = callee_info.as.function.result;
         total_effects |= stage_effects;
-        expr_info_list_record(&ctx->expr_info, stage, current_type, stage_effects);
+        expr_info_list_record(ctx, stage, current_type, stage_effects);
     }
-    expr_info_list_record(&ctx->expr_info, expr, current_type, total_effects);
+    expr_info_list_record(ctx, expr, current_type, total_effects);
     if (out_effects) *out_effects |= total_effects;
     return current_type;
 }
@@ -487,7 +589,7 @@ static NovaTypeId analyze_match(NovaSemanticContext *ctx, NovaScope *scope, cons
         arm_type = unify_types(ctx, arm_type, body_type, arm->body->start_token);
     }
     check_match_exhaustiveness(ctx, expr, scrutinee_type);
-    expr_info_list_record(&ctx->expr_info, expr, arm_type, effects);
+    expr_info_list_record(ctx, expr, arm_type, effects);
     if (out_effects) *out_effects |= effects;
     return arm_type;
 }
@@ -508,7 +610,7 @@ static NovaTypeId analyze_if(NovaSemanticContext *ctx, NovaScope *scope, const N
         effects |= else_effects;
     }
     NovaTypeId result = unify_types(ctx, then_type, else_type, expr->start_token);
-    expr_info_list_record(&ctx->expr_info, expr, result, effects);
+    expr_info_list_record(ctx, expr, result, effects);
     if (out_effects) *out_effects |= effects;
     return result;
 }
@@ -520,7 +622,7 @@ static NovaTypeId analyze_while(NovaSemanticContext *ctx, NovaScope *scope, cons
     NovaEffectMask body_effects = NOVA_EFFECT_NONE;
     analyze_expr(ctx, scope, expr->as.while_expr.body, &body_effects);
     effects |= body_effects;
-    expr_info_list_record(&ctx->expr_info, expr, ctx->type_unit, effects);
+    expr_info_list_record(ctx, expr, ctx->type_unit, effects);
     if (out_effects) *out_effects |= effects;
     return ctx->type_unit;
 }
@@ -548,7 +650,7 @@ static NovaTypeId analyze_lambda(NovaSemanticContext *ctx, NovaScope *scope, con
     scope_free(lambda_scope);
     NovaTypeId fn_type = type_function(ctx, param_types, expr->as.lambda.params.count, body_type, body_effects);
     free(param_types);
-    expr_info_list_record(&ctx->expr_info, expr, fn_type, NOVA_EFFECT_NONE);
+    expr_info_list_record(ctx, expr, fn_type, NOVA_EFFECT_NONE);
     if (out_effects) *out_effects |= NOVA_EFFECT_NONE;
     return fn_type;
 }
@@ -582,14 +684,14 @@ static NovaTypeId analyze_expr(NovaSemanticContext *ctx, NovaScope *scope, const
         NovaEffectMask effects = NOVA_EFFECT_ASYNC;
         NovaTypeId inner = analyze_expr(ctx, scope, expr->as.unary.value, &effects);
         if (out_effects) *out_effects |= effects;
-        expr_info_list_record(&ctx->expr_info, expr, inner, effects);
+        expr_info_list_record(ctx, expr, inner, effects);
         return inner;
     }
     case NOVA_EXPR_AWAIT: {
         NovaEffectMask effects = NOVA_EFFECT_NONE;
         NovaTypeId inner = analyze_expr(ctx, scope, expr->as.unary.value, &effects);
         if (out_effects) *out_effects |= effects;
-        expr_info_list_record(&ctx->expr_info, expr, inner, effects);
+        expr_info_list_record(ctx, expr, inner, effects);
         return inner;
     }
     case NOVA_EXPR_EFFECT: {
@@ -597,7 +699,7 @@ static NovaTypeId analyze_expr(NovaSemanticContext *ctx, NovaScope *scope, const
         NovaTypeId inner = analyze_expr(ctx, scope, expr->as.unary.value, &effects);
         effects |= NOVA_EFFECT_IMPURE;
         if (out_effects) *out_effects |= effects;
-        expr_info_list_record(&ctx->expr_info, expr, inner, effects);
+        expr_info_list_record(ctx, expr, inner, effects);
         return inner;
     }
     case NOVA_EXPR_PAREN:
@@ -666,6 +768,10 @@ void nova_semantic_context_init(NovaSemanticContext *ctx) {
     ctx->type_capacity = 0;
     type_record_list_init(&ctx->type_records);
     expr_info_list_init(&ctx->expr_info);
+    ctx->expr_index_keys = NULL;
+    ctx->expr_index_values = NULL;
+    ctx->expr_index_count = 0;
+    ctx->expr_index_capacity = 0;
     ctx->type_unknown = type_pool_add(ctx, (NovaTypeInfo){ .kind = NOVA_TYPE_KIND_UNKNOWN });
     ctx->type_unit = type_pool_add(ctx, (NovaTypeInfo){ .kind = NOVA_TYPE_KIND_UNIT });
     ctx->type_number = type_pool_add(ctx, (NovaTypeInfo){ .kind = NOVA_TYPE_KIND_NUMBER });
@@ -685,6 +791,8 @@ void nova_semantic_context_free(NovaSemanticContext *ctx) {
     free(ctx->types);
     type_record_list_free(&ctx->type_records);
     expr_info_list_free(&ctx->expr_info);
+    free(ctx->expr_index_keys);
+    free(ctx->expr_index_values);
     nova_diagnostic_list_free(&ctx->diagnostics);
 }
 
@@ -710,12 +818,15 @@ void nova_semantic_analyze_program(NovaSemanticContext *ctx, const NovaProgram *
 }
 
 const NovaExprInfo *nova_semantic_lookup_expr(const NovaSemanticContext *ctx, const NovaExpr *expr) {
-    for (size_t i = 0; i < ctx->expr_info.count; ++i) {
-        if (ctx->expr_info.items[i].expr == expr) {
-            return &ctx->expr_info.items[i];
-        }
+    size_t index = expr_index_lookup(ctx, expr);
+    if (index != NOVA_EXPR_INDEX_MISSING) {
+        return &ctx->expr_info.items[index];
     }
-    return NULL;
+    index = expr_info_list_linear_lookup(&ctx->expr_info, expr);
+    if (index == NOVA_EXPR_INDEX_MISSING) {
+        return NULL;
+    }
+    return &ctx->expr_info.items[index];
 }
 
 const NovaTypeInfo *nova_semantic_type_info(const NovaSemanticContext *ctx, NovaTypeId type_id) {
