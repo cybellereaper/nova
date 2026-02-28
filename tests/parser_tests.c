@@ -21,6 +21,7 @@
 
 #include "nova/codegen.h"
 #include "nova/ir.h"
+#include "nova/lexer.h"
 #include "nova/parser.h"
 #include "nova/semantic.h"
 #include "nova/gc.h"
@@ -318,6 +319,59 @@ static void test_parser_and_semantics(void) {
     nova_program_free(program);
     free(program);
     nova_parser_free(&parser);
+}
+
+static void test_lexer_keyword_classification(void) {
+    const char *source =
+        "module import fun let type if while else match async await true false value";
+    NovaTokenArray tokens = nova_lexer_tokenize(source);
+    assert(tokens.size >= 15);
+
+    const NovaTokenType expected[] = {
+        NOVA_TOKEN_MODULE,
+        NOVA_TOKEN_IMPORT,
+        NOVA_TOKEN_FUN,
+        NOVA_TOKEN_LET,
+        NOVA_TOKEN_TYPE,
+        NOVA_TOKEN_IF,
+        NOVA_TOKEN_WHILE,
+        NOVA_TOKEN_ELSE,
+        NOVA_TOKEN_MATCH,
+        NOVA_TOKEN_ASYNC,
+        NOVA_TOKEN_AWAIT,
+        NOVA_TOKEN_TRUE,
+        NOVA_TOKEN_FALSE,
+        NOVA_TOKEN_IDENTIFIER,
+        NOVA_TOKEN_EOF,
+    };
+    const size_t expected_count = sizeof(expected) / sizeof(expected[0]);
+    assert(tokens.size == expected_count);
+    for (size_t i = 0; i < expected_count; ++i) {
+        assert(tokens.data[i].type == expected[i]);
+    }
+
+    nova_token_array_free(&tokens);
+}
+
+static void test_lexer_large_input_tokenization(void) {
+    const size_t statement_count = 5000;
+    const size_t estimated = statement_count * 32 + 64;
+    char *source = malloc(estimated);
+    assert(source != NULL);
+
+    size_t used = (size_t)snprintf(source, estimated, "module stress.tokens\n");
+    for (size_t i = 0; i < statement_count; ++i) {
+        used += (size_t)snprintf(source + used, estimated - used, "let v%zu = %zu\n", i, i);
+    }
+
+    NovaTokenArray tokens = nova_lexer_tokenize(source);
+    assert(tokens.size > statement_count * 4);
+    assert(tokens.data[tokens.size - 1].type == NOVA_TOKEN_EOF);
+    assert(tokens.data[0].type == NOVA_TOKEN_MODULE);
+    assert(tokens.capacity >= tokens.size);
+
+    nova_token_array_free(&tokens);
+    free(source);
 }
 
 static void test_match_exhaustiveness_warning(void) {
@@ -684,6 +738,8 @@ int main(void) {
     test_gc_incremental_steps();
     test_gc_mock_allocator_and_failure();
     test_parser_and_semantics();
+    test_lexer_keyword_classification();
+    test_lexer_large_input_tokenization();
     test_match_exhaustiveness_warning();
     test_codegen_pipeline();
     test_ir_lowering_extensions();
