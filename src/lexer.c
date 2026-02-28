@@ -1,36 +1,100 @@
 #include "nova/lexer.h"
 
-#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
+static inline bool nova_is_alpha(char c) {
+    unsigned char uc = (unsigned char)c;
+    uc |= (unsigned char)0x20;
+    return uc >= 'a' && uc <= 'z';
+}
+
+static inline bool nova_is_digit(char c) {
+    return c >= '0' && c <= '9';
+}
+
+static inline bool nova_is_alnum_or_underscore(char c) {
+    return nova_is_alpha(c) || nova_is_digit(c) || c == '_';
+}
+
 static bool nova_match_keyword(const char *lexeme, size_t length, NovaTokenType *type) {
-    struct Keyword {
-        const char *text;
-        size_t length;
-        NovaTokenType type;
-    };
-    static const struct Keyword keywords[] = {
-        {"module", sizeof("module") - 1, NOVA_TOKEN_MODULE},
-        {"import", sizeof("import") - 1, NOVA_TOKEN_IMPORT},
-        {"fun", sizeof("fun") - 1, NOVA_TOKEN_FUN},
-        {"let", sizeof("let") - 1, NOVA_TOKEN_LET},
-        {"type", sizeof("type") - 1, NOVA_TOKEN_TYPE},
-        {"if", sizeof("if") - 1, NOVA_TOKEN_IF},
-        {"while", sizeof("while") - 1, NOVA_TOKEN_WHILE},
-        {"else", sizeof("else") - 1, NOVA_TOKEN_ELSE},
-        {"match", sizeof("match") - 1, NOVA_TOKEN_MATCH},
-        {"async", sizeof("async") - 1, NOVA_TOKEN_ASYNC},
-        {"await", sizeof("await") - 1, NOVA_TOKEN_AWAIT},
-        {"true", sizeof("true") - 1, NOVA_TOKEN_TRUE},
-        {"false", sizeof("false") - 1, NOVA_TOKEN_FALSE},
-    };
-    for (size_t i = 0; i < sizeof(keywords) / sizeof(keywords[0]); ++i) {
-        if (keywords[i].length == length && strncmp(keywords[i].text, lexeme, length) == 0) {
-            *type = keywords[i].type;
+    if (length < 2 || length > 6) {
+        return false;
+    }
+
+    switch (lexeme[0]) {
+    case 'a':
+        if (length == 5 && memcmp(lexeme, "async", 5) == 0) {
+            *type = NOVA_TOKEN_ASYNC;
             return true;
         }
+        if (length == 5 && memcmp(lexeme, "await", 5) == 0) {
+            *type = NOVA_TOKEN_AWAIT;
+            return true;
+        }
+        return false;
+    case 'e':
+        if (length == 4 && memcmp(lexeme, "else", 4) == 0) {
+            *type = NOVA_TOKEN_ELSE;
+            return true;
+        }
+        return false;
+    case 'f':
+        if (length == 3 && memcmp(lexeme, "fun", 3) == 0) {
+            *type = NOVA_TOKEN_FUN;
+            return true;
+        }
+        if (length == 5 && memcmp(lexeme, "false", 5) == 0) {
+            *type = NOVA_TOKEN_FALSE;
+            return true;
+        }
+        return false;
+    case 'i':
+        if (length == 2 && memcmp(lexeme, "if", 2) == 0) {
+            *type = NOVA_TOKEN_IF;
+            return true;
+        }
+        if (length == 6 && memcmp(lexeme, "import", 6) == 0) {
+            *type = NOVA_TOKEN_IMPORT;
+            return true;
+        }
+        return false;
+    case 'l':
+        if (length == 3 && memcmp(lexeme, "let", 3) == 0) {
+            *type = NOVA_TOKEN_LET;
+            return true;
+        }
+        return false;
+    case 'm':
+        if (length == 5 && memcmp(lexeme, "match", 5) == 0) {
+            *type = NOVA_TOKEN_MATCH;
+            return true;
+        }
+        if (length == 6 && memcmp(lexeme, "module", 6) == 0) {
+            *type = NOVA_TOKEN_MODULE;
+            return true;
+        }
+        return false;
+    case 't':
+        if (length == 4 && memcmp(lexeme, "type", 4) == 0) {
+            *type = NOVA_TOKEN_TYPE;
+            return true;
+        }
+        if (length == 4 && memcmp(lexeme, "true", 4) == 0) {
+            *type = NOVA_TOKEN_TRUE;
+            return true;
+        }
+        return false;
+    case 'w':
+        if (length == 5 && memcmp(lexeme, "while", 5) == 0) {
+            *type = NOVA_TOKEN_WHILE;
+            return true;
+        }
+        return false;
+    default:
+        return false;
     }
+
     return false;
 }
 
@@ -139,12 +203,12 @@ static NovaToken lex_number(NovaLexer *lexer) {
     size_t start_pos = lexer->position;
     size_t line = lexer->line;
     size_t column = lexer->column;
-    while (isdigit((unsigned char)peek(lexer))) {
+    while (nova_is_digit(peek(lexer))) {
         advance(lexer);
     }
     if (peek(lexer) == '.') {
         advance(lexer);
-        while (isdigit((unsigned char)peek(lexer))) {
+        while (nova_is_digit(peek(lexer))) {
             advance(lexer);
         }
     }
@@ -156,7 +220,7 @@ static NovaToken lex_identifier(NovaLexer *lexer) {
     size_t start_pos = lexer->position;
     size_t line = lexer->line;
     size_t column = lexer->column;
-    while (isalnum((unsigned char)peek(lexer)) || peek(lexer) == '_') {
+    while (nova_is_alnum_or_underscore(peek(lexer))) {
         advance(lexer);
     }
     size_t length = lexer->position - start_pos;
@@ -176,10 +240,10 @@ NovaToken nova_lexer_next(NovaLexer *lexer) {
     if (c == '\0') {
         return make_token(lexer, NOVA_TOKEN_EOF, start, 0, line, column);
     }
-    if (isalpha((unsigned char)c) || c == '_') {
+    if (nova_is_alpha(c) || c == '_') {
         return lex_identifier(lexer);
     }
-    if (isdigit((unsigned char)c)) {
+    if (nova_is_digit(c)) {
         return lex_number(lexer);
     }
     switch (c) {
