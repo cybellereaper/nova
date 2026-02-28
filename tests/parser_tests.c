@@ -23,6 +23,7 @@
 #include "nova/ir.h"
 #include "nova/parser.h"
 #include "nova/semantic.h"
+#include "nova/gc.h"
 
 static const char *CORE_PROGRAM =
     "module demo.core\n"
@@ -156,6 +157,136 @@ static char *build_mock_stress_program(size_t function_count, size_t pipeline_de
         used += (size_t)snprintf(source + used, estimated - used, "\n");
     }
     return source;
+}
+
+
+
+typedef struct {
+    void *child;
+    int value;
+} MockNode;
+
+typedef struct {
+    size_t alloc_calls;
+    size_t free_calls;
+    size_t fail_after;
+} MockAllocator;
+
+static void *mock_alloc(void *ctx, size_t size) {
+    MockAllocator *allocator = (MockAllocator *)ctx;
+    allocator->alloc_calls += 1;
+    if (allocator->fail_after > 0 && allocator->alloc_calls > allocator->fail_after) {
+        return NULL;
+    }
+    return malloc(size);
+}
+
+static void mock_free(void *ctx, void *ptr) {
+    MockAllocator *allocator = (MockAllocator *)ctx;
+    allocator->free_calls += 1;
+    free(ptr);
+}
+
+static void mock_node_trace(NovaGC *gc, void *payload) {
+    MockNode *node = (MockNode *)payload;
+    nova_gc_mark_ptr(gc, node->child);
+}
+
+static void test_gc_preserves_reachable_objects(void) {
+    NovaGC *gc = nova_gc_create(NULL);
+    assert(gc != NULL);
+
+    MockNode *root = nova_gc_alloc(gc, sizeof(MockNode), mock_node_trace, NULL);
+    MockNode *child = nova_gc_alloc(gc, sizeof(MockNode), mock_node_trace, NULL);
+    MockNode *garbage = nova_gc_alloc(gc, sizeof(MockNode), mock_node_trace, NULL);
+    assert(root != NULL && child != NULL && garbage != NULL);
+
+    root->child = child;
+    root->value = 7;
+    child->child = NULL;
+    child->value = 42;
+    garbage->child = NULL;
+
+    void *root_slot = root;
+    assert(nova_gc_add_root(gc, &root_slot));
+    nova_gc_collect(gc);
+
+    NovaGCStats stats = nova_gc_stats(gc);
+    assert(stats.objects_total == 2);
+    assert(stats.objects_swept >= 1);
+    assert(stats.bytes_live >= sizeof(MockNode) * 2);
+
+    nova_gc_remove_root(gc, &root_slot);
+    root_slot = NULL;
+    nova_gc_collect(gc);
+
+    stats = nova_gc_stats(gc);
+    assert(stats.objects_total == 0);
+    nova_gc_destroy(gc);
+}
+
+static void test_gc_incremental_steps(void) {
+    NovaGCConfig config = {
+        .initial_threshold_bytes = 64,
+        .growth_percent = 100,
+    };
+    NovaGC *gc = nova_gc_create(&config);
+    assert(gc != NULL);
+
+    void *root = NULL;
+    assert(nova_gc_add_root(gc, &root));
+
+    for (size_t i = 0; i < 200; ++i) {
+        MockNode *node = nova_gc_alloc(gc, sizeof(MockNode), mock_node_trace, NULL);
+        assert(node != NULL);
+        node->child = root;
+        root = node;
+    }
+
+    size_t collections_before = nova_gc_stats(gc).collections;
+    nova_gc_collect_step(gc, 8);
+    NovaGCStats stepped = nova_gc_stats(gc);
+    assert(stepped.collections >= collections_before + 1);
+    assert(stepped.collection_in_progress);
+
+    while (nova_gc_stats(gc).collection_in_progress) {
+        nova_gc_collect_step(gc, 8);
+    }
+
+    root = NULL;
+    nova_gc_collect(gc);
+    assert(nova_gc_stats(gc).objects_total == 0);
+
+    nova_gc_destroy(gc);
+}
+
+static void test_gc_mock_allocator_and_failure(void) {
+    MockAllocator allocator = {0};
+    NovaGCConfig config = {
+        .alloc = mock_alloc,
+        .free = mock_free,
+        .ctx = &allocator,
+        .initial_threshold_bytes = 32,
+    };
+
+    NovaGC *gc = nova_gc_create(&config);
+    assert(gc != NULL);
+
+    for (size_t i = 0; i < 16; ++i) {
+        MockNode *node = nova_gc_alloc(gc, sizeof(MockNode), mock_node_trace, NULL);
+        assert(node != NULL);
+        node->child = NULL;
+    }
+
+    nova_gc_collect(gc);
+    assert(allocator.alloc_calls > 0);
+
+    allocator.fail_after = allocator.alloc_calls;
+    void *maybe_null = nova_gc_alloc(gc, sizeof(MockNode), mock_node_trace, NULL);
+    assert(maybe_null == NULL);
+
+    nova_gc_destroy(gc);
+    assert(allocator.free_calls > 0);
 }
 
 static void test_parser_and_semantics(void) {
@@ -549,6 +680,9 @@ static void test_examples(void) {
 }
 
 int main(void) {
+    test_gc_preserves_reachable_objects();
+    test_gc_incremental_steps();
+    test_gc_mock_allocator_and_failure();
     test_parser_and_semantics();
     test_match_exhaustiveness_warning();
     test_codegen_pipeline();

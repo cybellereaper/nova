@@ -28,6 +28,8 @@ developer tooling.
     exhaustiveness checking, and per-expression type/effect metadata.
   * A typed intermediate representation (`nova/ir.h`, `src/ir.c`) lowered from
     the AST with help from semantic results.
+  * A low-latency incremental mark/sweep garbage collector runtime (`nova/gc.h`,
+    `src/gc.c`) with pluggable allocators for performance tuning and tests.
   * A native code generator (`nova/codegen.h`, `src/codegen.c`) that emits C
     and drives the system compiler to produce object files.
 * Developer tooling under `tools/`:
