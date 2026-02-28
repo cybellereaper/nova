@@ -20,6 +20,7 @@
 #endif
 
 #include "nova/codegen.h"
+#include "nova/gc.h"
 #include "nova/ir.h"
 #include "nova/parser.h"
 #include "nova/semantic.h"
@@ -156,6 +157,203 @@ static char *build_mock_stress_program(size_t function_count, size_t pipeline_de
         used += (size_t)snprintf(source + used, estimated - used, "\n");
     }
     return source;
+}
+
+
+typedef struct {
+    int value;
+    void *next;
+} MockGCNode;
+
+typedef struct {
+    size_t alloc_count;
+    size_t free_count;
+    size_t fail_after;
+} MockAllocatorState;
+
+static void *mock_gc_malloc(size_t size, void *user_data) {
+    MockAllocatorState *state = (MockAllocatorState *)user_data;
+    state->alloc_count++;
+    if (state->fail_after > 0 && state->alloc_count > state->fail_after) {
+        return NULL;
+    }
+    return malloc(size);
+}
+
+static void mock_gc_free(void *ptr, void *user_data) {
+    MockAllocatorState *state = (MockAllocatorState *)user_data;
+    state->free_count++;
+    free(ptr);
+}
+
+static void trace_mock_node(NovaGC *gc, void *object, void *ctx) {
+    (void)ctx;
+    MockGCNode *node = (MockGCNode *)object;
+    nova_gc_mark(gc, node->next);
+}
+
+static void test_gc_collects_unreachable_graph(void) {
+    NovaGC gc;
+    nova_gc_init(&gc, NULL);
+
+    MockGCNode *root = (MockGCNode *)nova_gc_alloc(&gc, sizeof(MockGCNode), trace_mock_node, NULL);
+    MockGCNode *child = (MockGCNode *)nova_gc_alloc(&gc, sizeof(MockGCNode), trace_mock_node, NULL);
+    MockGCNode *orphan = (MockGCNode *)nova_gc_alloc(&gc, sizeof(MockGCNode), trace_mock_node, NULL);
+    assert(root != NULL && child != NULL && orphan != NULL);
+
+    root->value = 1;
+    child->value = 2;
+    orphan->value = 3;
+    root->next = child;
+
+    void *root_slot = root;
+    nova_gc_add_root(&gc, &root_slot);
+    size_t swept = nova_gc_collect(&gc, NULL);
+    assert(swept == 1);
+
+    NovaGCStats stats;
+    nova_gc_stats(&gc, &stats);
+    assert(stats.object_count == 2);
+    assert(stats.collections >= 1);
+
+    root_slot = NULL;
+    swept = nova_gc_collect(&gc, NULL);
+    assert(swept == 2);
+
+    nova_gc_remove_root(&gc, &root_slot);
+    nova_gc_destroy(&gc);
+}
+
+static void test_gc_sweep_budget_limits_latency(void) {
+    NovaGC gc;
+    nova_gc_init(&gc, NULL);
+
+    for (size_t i = 0; i < 10; ++i) {
+        assert(nova_gc_alloc(&gc, sizeof(MockGCNode), trace_mock_node, NULL) != NULL);
+    }
+
+    NovaGCCollectOptions options = { .sweep_budget = 3 };
+    size_t swept = nova_gc_collect(&gc, &options);
+    assert(swept == 3);
+
+    NovaGCStats stats;
+    nova_gc_stats(&gc, &stats);
+    assert(stats.object_count == 7);
+    assert(stats.collections == 0);
+
+    options.sweep_budget = 3;
+    swept = nova_gc_collect(&gc, &options);
+    assert(swept == 3);
+
+    options.sweep_budget = 3;
+    swept = nova_gc_collect(&gc, &options);
+    assert(swept == 3);
+
+    options.sweep_budget = 3;
+    swept = nova_gc_collect(&gc, &options);
+    assert(swept == 1);
+
+    nova_gc_stats(&gc, &stats);
+    assert(stats.object_count == 0);
+    assert(stats.collections == 1);
+
+    nova_gc_destroy(&gc);
+}
+
+static void test_gc_alloc_during_incremental_cycle(void) {
+    NovaGC gc;
+    nova_gc_init(&gc, NULL);
+
+    for (size_t i = 0; i < 5; ++i) {
+        assert(nova_gc_alloc(&gc, sizeof(MockGCNode), trace_mock_node, NULL) != NULL);
+    }
+
+    NovaGCCollectOptions options = { .sweep_budget = 2 };
+    size_t swept = nova_gc_collect(&gc, &options);
+    assert(swept == 2);
+
+    MockGCNode *survivor = (MockGCNode *)nova_gc_alloc(&gc, sizeof(MockGCNode), trace_mock_node, NULL);
+    assert(survivor != NULL);
+    void *root_slot = survivor;
+    nova_gc_add_root(&gc, &root_slot);
+
+    swept = nova_gc_collect(&gc, &options);
+    assert(swept == 2);
+    swept = nova_gc_collect(&gc, &options);
+    assert(swept == 1);
+
+    NovaGCStats stats;
+    nova_gc_stats(&gc, &stats);
+    assert(stats.object_count == 1);
+
+    root_slot = NULL;
+    swept = nova_gc_collect(&gc, NULL);
+    assert(swept == 1);
+
+    nova_gc_remove_root(&gc, &root_slot);
+    nova_gc_destroy(&gc);
+}
+
+
+static void test_gc_deep_graph_mark_latency(void) {
+    NovaGC gc;
+    nova_gc_init(&gc, NULL);
+
+    const size_t depth = 20000;
+    MockGCNode *head = NULL;
+    for (size_t i = 0; i < depth; ++i) {
+        MockGCNode *node = (MockGCNode *)nova_gc_alloc(&gc, sizeof(MockGCNode), trace_mock_node, NULL);
+        assert(node != NULL);
+        node->next = head;
+        head = node;
+    }
+
+    void *root_slot = head;
+    nova_gc_add_root(&gc, &root_slot);
+
+    size_t swept = nova_gc_collect(&gc, NULL);
+    assert(swept == 0);
+
+    NovaGCStats stats;
+    nova_gc_stats(&gc, &stats);
+    assert(stats.object_count == depth);
+
+    root_slot = NULL;
+    swept = nova_gc_collect(&gc, NULL);
+    assert(swept == depth);
+
+    nova_gc_remove_root(&gc, &root_slot);
+    nova_gc_destroy(&gc);
+}
+
+static void test_gc_with_mock_allocator(void) {
+    MockAllocatorState state = {0};
+    state.fail_after = 2;
+    NovaGCAllocator allocator = {
+        .malloc_fn = mock_gc_malloc,
+        .free_fn = mock_gc_free,
+        .user_data = &state,
+    };
+
+    NovaGC gc;
+    nova_gc_init(&gc, &allocator);
+
+    void *root = nova_gc_alloc(&gc, sizeof(MockGCNode), trace_mock_node, NULL);
+    assert(root != NULL);
+
+    void *slot = root;
+    nova_gc_add_root(&gc, &slot);
+
+    void *will_fail = nova_gc_alloc(&gc, sizeof(MockGCNode), trace_mock_node, NULL);
+    assert(will_fail == NULL);
+
+    slot = NULL;
+    nova_gc_collect(&gc, NULL);
+    nova_gc_remove_root(&gc, &slot);
+    nova_gc_destroy(&gc);
+
+    assert(state.alloc_count >= 3);
+    assert(state.free_count >= 1);
 }
 
 static void test_parser_and_semantics(void) {
@@ -549,6 +747,11 @@ static void test_examples(void) {
 }
 
 int main(void) {
+    test_gc_collects_unreachable_graph();
+    test_gc_sweep_budget_limits_latency();
+    test_gc_alloc_during_incremental_cycle();
+    test_gc_deep_graph_mark_latency();
+    test_gc_with_mock_allocator();
     test_parser_and_semantics();
     test_match_exhaustiveness_warning();
     test_codegen_pipeline();
