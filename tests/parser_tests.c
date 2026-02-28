@@ -342,9 +342,9 @@ static void test_parser_and_semantics(void) {
 
 static void test_lexer_keyword_classification(void) {
     const char *source =
-        "module import fun let type if while else match async await true false value";
+        "module import fun let type if while else match async await true false value modulex async_task";
     NovaTokenArray tokens = nova_lexer_tokenize(source);
-    assert(tokens.size >= 15);
+    assert(tokens.size >= 17);
 
     const NovaTokenType expected[] = {
         NOVA_TOKEN_MODULE,
@@ -360,6 +360,8 @@ static void test_lexer_keyword_classification(void) {
         NOVA_TOKEN_AWAIT,
         NOVA_TOKEN_TRUE,
         NOVA_TOKEN_FALSE,
+        NOVA_TOKEN_IDENTIFIER,
+        NOVA_TOKEN_IDENTIFIER,
         NOVA_TOKEN_IDENTIFIER,
         NOVA_TOKEN_EOF,
     };
