@@ -22,6 +22,10 @@ static void derive_c_path(const char *object_path, char *buffer, size_t size) {
     }
 }
 
+static void derive_wrapper_path(const char *output_path, char *buffer, size_t size) {
+    snprintf(buffer, size, "%s.wrapper.c", output_path);
+}
+
 static void emit_token(FILE *out, NovaToken token) {
     fwrite(token.lexeme, 1, token.length, out);
 }
@@ -199,12 +203,7 @@ static bool emit_function(FILE *out, const NovaSemanticContext *semantics, const
     return true;
 }
 
-bool nova_codegen_emit_object(const NovaIRProgram *program, const NovaSemanticContext *semantics, const char *object_path, char *error_buffer, size_t error_buffer_size) {
-    if (!program || !object_path) {
-        return false;
-    }
-    char c_path[PATH_MAX];
-    derive_c_path(object_path, c_path, sizeof(c_path));
+static bool emit_program_c(const NovaIRProgram *program, const NovaSemanticContext *semantics, const char *c_path, char *error_buffer, size_t error_buffer_size) {
     FILE *out = fopen(c_path, "w");
     if (!out) {
         if (error_buffer && error_buffer_size > 0) {
@@ -224,9 +223,47 @@ bool nova_codegen_emit_object(const NovaIRProgram *program, const NovaSemanticCo
         }
     }
     fclose(out);
-    char command[PATH_MAX * 2];
-    snprintf(command, sizeof(command), "cc -std=c11 -O3 -c %s -o %s", c_path, object_path);
-    int result = system(command);
+    return true;
+}
+
+static int invoke_cc(const char *source_path, const char *output_path, bool link_executable) {
+    const char *cc = getenv("NOVA_CC");
+    if (!cc || cc[0] == '\0') {
+        cc = "cc";
+    }
+    const char *common_flags = "-std=c11 -O3 -flto -fno-plt -fomit-frame-pointer -DNDEBUG";
+    char command[PATH_MAX * 4];
+    if (link_executable) {
+        snprintf(command,
+                 sizeof(command),
+                 "%s %s -Wl,--gc-sections %s -o %s",
+                 cc,
+                 common_flags,
+                 source_path,
+                 output_path);
+    } else {
+        snprintf(command,
+                 sizeof(command),
+                 "%s %s -c %s -o %s",
+                 cc,
+                 common_flags,
+                 source_path,
+                 output_path);
+    }
+    return system(command);
+}
+
+bool nova_codegen_emit_object(const NovaIRProgram *program, const NovaSemanticContext *semantics, const char *object_path, char *error_buffer, size_t error_buffer_size) {
+    if (!program || !object_path) {
+        return false;
+    }
+    char c_path[PATH_MAX];
+    derive_c_path(object_path, c_path, sizeof(c_path));
+    if (!emit_program_c(program, semantics, c_path, error_buffer, error_buffer_size)) {
+        return false;
+    }
+
+    int result = invoke_cc(c_path, object_path, false);
     if (result != 0) {
         if (error_buffer && error_buffer_size > 0) {
             snprintf(error_buffer, error_buffer_size, "code generation failed (cc exit %d)", result);
@@ -235,5 +272,89 @@ bool nova_codegen_emit_object(const NovaIRProgram *program, const NovaSemanticCo
         return false;
     }
     remove(c_path);
+    return true;
+}
+
+bool nova_codegen_emit_executable(const NovaIRProgram *program, const NovaSemanticContext *semantics, const char *executable_path, const char *entry_function, char *error_buffer, size_t error_buffer_size) {
+    if (!program || !executable_path || !entry_function || entry_function[0] == '\0') {
+        return false;
+    }
+
+    char c_path[PATH_MAX];
+    derive_c_path(executable_path, c_path, sizeof(c_path));
+    if (!emit_program_c(program, semantics, c_path, error_buffer, error_buffer_size)) {
+        return false;
+    }
+
+    char wrapper_path[PATH_MAX];
+    derive_wrapper_path(executable_path, wrapper_path, sizeof(wrapper_path));
+    FILE *wrapper = fopen(wrapper_path, "w");
+    if (!wrapper) {
+        if (error_buffer && error_buffer_size > 0) {
+            snprintf(error_buffer, error_buffer_size, "failed to open %s", wrapper_path);
+        }
+        remove(c_path);
+        return false;
+    }
+
+    fprintf(wrapper,
+            "double %s(void);\n"
+            "int main(void) {\n"
+            "    return (int)%s();\n"
+            "}\n",
+            entry_function,
+            entry_function);
+    fclose(wrapper);
+
+    char merge_path[PATH_MAX];
+    snprintf(merge_path, sizeof(merge_path), "%s.merge.c", executable_path);
+    FILE *merged = fopen(merge_path, "w");
+    if (!merged) {
+        if (error_buffer && error_buffer_size > 0) {
+            snprintf(error_buffer, error_buffer_size, "failed to open %s", merge_path);
+        }
+        remove(c_path);
+        remove(wrapper_path);
+        return false;
+    }
+
+    FILE *source = fopen(c_path, "r");
+    FILE *entry = fopen(wrapper_path, "r");
+    if (!source || !entry) {
+        if (error_buffer && error_buffer_size > 0) {
+            snprintf(error_buffer, error_buffer_size, "failed to read generated sources");
+        }
+        if (source) fclose(source);
+        if (entry) fclose(entry);
+        fclose(merged);
+        remove(c_path);
+        remove(wrapper_path);
+        remove(merge_path);
+        return false;
+    }
+
+    int ch;
+    while ((ch = fgetc(source)) != EOF) {
+        fputc(ch, merged);
+    }
+    fputc('\n', merged);
+    while ((ch = fgetc(entry)) != EOF) {
+        fputc(ch, merged);
+    }
+    fclose(source);
+    fclose(entry);
+    fclose(merged);
+
+    int result = invoke_cc(merge_path, executable_path, true);
+    remove(c_path);
+    remove(wrapper_path);
+    remove(merge_path);
+    if (result != 0) {
+        if (error_buffer && error_buffer_size > 0) {
+            snprintf(error_buffer, error_buffer_size, "AOT executable generation failed (cc exit %d)", result);
+        }
+        return false;
+    }
+
     return true;
 }

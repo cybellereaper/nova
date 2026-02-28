@@ -36,7 +36,8 @@ developer tooling.
   * `nova-fmt` — simple formatter that reflows NovaLang source while validating
     syntax.
   * `nova-check` — end-to-end stability checker that parses, runs semantic
-    analysis, lowers to IR, and optionally runs native code generation.
+    analysis, lowers to IR, and optionally runs native code generation. It can
+    now also emit ahead-of-time (AOT) native executables.
   * `nova-repl` — interactive shell that reports the inferred type of
     expressions.
   * `nova-new` — scaffolds a new NovaLang project with a manifest and sample
@@ -67,6 +68,19 @@ Try one of the shipped examples:
 ```
 ./build/nova-check examples/pipeline.nova
 ```
+
+
+You can also ask `nova-check` to produce an ahead-of-time executable from a
+Nova source module. By default it uses the `main` Nova function as the entry
+point, but you can override that with `--entry`:
+
+```
+./build/nova-check --emit-aot build/demo-app --entry app_entry path/to/file.nova
+```
+
+The native backend uses an aggressive low-latency profile (`-O3 -flto
+-fno-plt -fomit-frame-pointer -DNDEBUG`) and supports overriding the compiler
+binary through the `NOVA_CC` environment variable.
 
 The test suite parses representative NovaLang snippets, runs semantic analysis
 to validate inference and diagnostics, lowers to the intermediate

@@ -7,12 +7,17 @@
 #include <limits.h>
 #include <errno.h>
 #include <time.h>
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 
 #ifdef _WIN32
 #include <direct.h>
 #include <process.h>
 #else
 #include <unistd.h>
+extern int setenv(const char *name, const char *value, int overwrite);
+extern int unsetenv(const char *name);
 #endif
 
 #ifndef PATH_MAX
@@ -111,6 +116,20 @@ static long nova_process_id(void) {
     return (long)_getpid();
 #else
     return (long)getpid();
+#endif
+}
+
+
+
+static void nova_setenv(const char *name, const char *value) {
+#ifdef _WIN32
+    _putenv_s(name, value ? value : "");
+#else
+    if (value) {
+        setenv(name, value, 1);
+    } else {
+        unsetenv(name);
+    }
 #endif
 }
 
@@ -390,6 +409,126 @@ static void test_match_exhaustiveness_warning(void) {
     nova_semantic_analyze_program(&ctx, program);
     assert(ctx.diagnostics.count > 0);
 
+    nova_semantic_context_free(&ctx);
+    nova_program_free(program);
+    free(program);
+    nova_parser_free(&parser);
+}
+
+
+
+static void test_codegen_uses_low_latency_flags(void) {
+    char template[] = "build/nova_ccXXXXXX";
+    char *dir = make_temp_dir(template);
+    assert(dir != NULL);
+
+    char cc_path[PATH_MAX];
+    snprintf(cc_path, sizeof(cc_path), "%s/mock_cc.sh", dir);
+    char log_path[PATH_MAX];
+    snprintf(log_path, sizeof(log_path), "%s/args.log", dir);
+
+    char script[PATH_MAX * 2];
+    snprintf(script,
+             sizeof(script),
+             "#!/usr/bin/env bash\n"
+             "echo \"$@\" > %s\n"
+             "out=\"\"\n"
+             "prev=\"\"\n"
+             "for arg in \"$@\"; do\n"
+             "  if [ \"$prev\" = \"-o\" ]; then out=\"$arg\"; fi\n"
+             "  prev=\"$arg\"\n"
+             "done\n"
+             "if [ -n \"$out\" ]; then : > \"$out\"; fi\n"
+             "exit 0\n",
+             log_path);
+    assert(write_file_contents(cc_path, script));
+
+#ifndef _WIN32
+    assert(chmod(cc_path, 0700) == 0);
+#endif
+
+    nova_setenv("NOVA_CC", cc_path);
+
+    const char *source =
+        "module demo.flags\n"
+        "fun main(): Number = 3\n";
+
+    NovaParser parser;
+    nova_parser_init(&parser, source);
+    NovaProgram *program = nova_parser_parse(&parser);
+    assert(program != NULL);
+
+    NovaSemanticContext ctx;
+    nova_semantic_context_init(&ctx);
+    nova_semantic_analyze_program(&ctx, program);
+    assert(ctx.diagnostics.count == 0);
+
+    NovaIRProgram *ir = nova_ir_lower(program, &ctx);
+    assert(ir != NULL);
+
+    char object_path[PATH_MAX];
+    snprintf(object_path, sizeof(object_path), "%s/out.o", dir);
+    char error[256] = {0};
+    bool ok = nova_codegen_emit_object(ir, &ctx, object_path, error, sizeof(error));
+    assert(ok);
+
+    char *args = read_file_contents(log_path);
+    assert(args != NULL);
+    assert(strstr(args, "-O3") != NULL);
+    assert(strstr(args, "-flto") != NULL);
+    assert(strstr(args, "-fno-plt") != NULL);
+    assert(strstr(args, "-fomit-frame-pointer") != NULL);
+    assert(strstr(args, "-c") != NULL);
+
+    free(args);
+    nova_setenv("NOVA_CC", NULL);
+
+    nova_ir_free(ir);
+    nova_semantic_context_free(&ctx);
+    nova_program_free(program);
+    free(program);
+    nova_parser_free(&parser);
+
+    char cleanup_cmd[PATH_MAX * 2];
+    snprintf(cleanup_cmd, sizeof(cleanup_cmd), "rm -rf %s", dir);
+    system(cleanup_cmd);
+}
+
+static void test_aot_executable_generation(void) {
+    const char *source =
+        "module demo.aot\n"
+        "fun app_entry(): Number = 7\n";
+
+    NovaParser parser;
+    nova_parser_init(&parser, source);
+    NovaProgram *program = nova_parser_parse(&parser);
+    assert(program != NULL);
+
+    NovaSemanticContext ctx;
+    nova_semantic_context_init(&ctx);
+    nova_semantic_analyze_program(&ctx, program);
+    assert(ctx.diagnostics.count == 0);
+
+    NovaIRProgram *ir = nova_ir_lower(program, &ctx);
+    assert(ir != NULL);
+
+    const char *exe_path = "build/nova-aot-sample";
+    char error[256] = {0};
+    bool ok = nova_codegen_emit_executable(ir, &ctx, exe_path, "app_entry", error, sizeof(error));
+    assert(ok && "AOT executable generation failed");
+
+    struct stat st;
+    assert(stat(exe_path, &st) == 0);
+
+#ifndef _WIN32
+    int rc = system("./build/nova-aot-sample");
+    assert(WIFEXITED(rc));
+    assert(WEXITSTATUS(rc) == 7);
+#endif
+
+    remove(exe_path);
+
+    nova_ir_free(ir);
     nova_semantic_context_free(&ctx);
     nova_program_free(program);
     free(program);
@@ -741,6 +880,8 @@ int main(void) {
     test_lexer_keyword_classification();
     test_lexer_large_input_tokenization();
     test_match_exhaustiveness_warning();
+    test_codegen_uses_low_latency_flags();
+    test_aot_executable_generation();
     test_codegen_pipeline();
     test_ir_lowering_extensions();
     test_ir_control_flow_optimizations();

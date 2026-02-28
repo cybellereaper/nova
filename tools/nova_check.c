@@ -99,12 +99,14 @@ static size_t diagnostic_count(const NovaDiagnosticList *list, NovaDiagnosticSev
 }
 
 static void usage(const char *argv0) {
-    fprintf(stderr, "Usage: %s [--strict] [--skip-codegen] <file>\n", argv0);
+    fprintf(stderr, "Usage: %s [--strict] [--skip-codegen] [--emit-aot <path>] [--entry <function>] <file>\n", argv0);
 }
 
 int main(int argc, char **argv) {
     bool strict = false;
     bool skip_codegen = false;
+    const char *aot_output = NULL;
+    const char *entry_function = "main";
     const char *path = NULL;
 
     for (int i = 1; i < argc; ++i) {
@@ -112,6 +114,18 @@ int main(int argc, char **argv) {
             strict = true;
         } else if (strcmp(argv[i], "--skip-codegen") == 0) {
             skip_codegen = true;
+        } else if (strcmp(argv[i], "--emit-aot") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 2;
+            }
+            aot_output = argv[++i];
+        } else if (strcmp(argv[i], "--entry") == 0) {
+            if (i + 1 >= argc) {
+                usage(argv[0]);
+                return 2;
+            }
+            entry_function = argv[++i];
         } else if (argv[i][0] == '-') {
             usage(argv[0]);
             return 2;
@@ -184,9 +198,18 @@ int main(int argc, char **argv) {
         }
 
         char object_path[PATH_MAX];
-        snprintf(object_path, sizeof(object_path), "build/nova-check-%ld.o", nova_process_id());
+        if (aot_output) {
+            snprintf(object_path, sizeof(object_path), "%s", aot_output);
+        } else {
+            snprintf(object_path, sizeof(object_path), "build/nova-check-%ld.o", nova_process_id());
+        }
         char error[256] = {0};
-        bool ok = nova_codegen_emit_object(ir, &ctx, object_path, error, sizeof(error));
+        bool ok = false;
+        if (aot_output) {
+            ok = nova_codegen_emit_executable(ir, &ctx, object_path, entry_function, error, sizeof(error));
+        } else {
+            ok = nova_codegen_emit_object(ir, &ctx, object_path, error, sizeof(error));
+        }
         if (!ok) {
             fprintf(stderr, "nova-check: %s\n", error[0] ? error : "code generation failed");
             nova_ir_free(ir);
@@ -197,7 +220,9 @@ int main(int argc, char **argv) {
             free(source);
             return 1;
         }
-        remove(object_path);
+        if (!aot_output) {
+            remove(object_path);
+        }
         nova_ir_free(ir);
     }
 
