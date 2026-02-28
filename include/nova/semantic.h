@@ -95,6 +95,10 @@ typedef struct {
     size_t type_capacity;
     NovaTypeRecordList type_records;
     NovaExprInfoList expr_info;
+    const NovaExpr **expr_index_keys;
+    size_t *expr_index_values;
+    size_t expr_index_count;
+    size_t expr_index_capacity;
     NovaTypeId type_unknown;
     NovaTypeId type_unit;
     NovaTypeId type_number;
@@ -108,4 +112,3 @@ void nova_semantic_analyze_program(NovaSemanticContext *ctx, const NovaProgram *
 const NovaExprInfo *nova_semantic_lookup_expr(const NovaSemanticContext *ctx, const NovaExpr *expr);
 const NovaTypeInfo *nova_semantic_type_info(const NovaSemanticContext *ctx, NovaTypeId type_id);
 const NovaTypeRecord *nova_semantic_find_type(const NovaSemanticContext *ctx, const NovaToken *name);
-

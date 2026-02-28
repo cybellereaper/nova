@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <limits.h>
 #include <errno.h>
+#include <time.h>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -137,6 +138,24 @@ static char *make_temp_dir(char *template) {
     }
     errno = EEXIST;
     return NULL;
+}
+
+
+static char *build_mock_stress_program(size_t function_count, size_t pipeline_depth) {
+    size_t estimated = 64 + function_count * (pipeline_depth * 20 + 80);
+    char *source = malloc(estimated);
+    if (!source) {
+        return NULL;
+    }
+    size_t used = (size_t)snprintf(source, estimated, "module demo.stress\nfun id(x: Number): Number = x\n");
+    for (size_t i = 0; i < function_count; ++i) {
+        used += (size_t)snprintf(source + used, estimated - used, "fun run_%zu(): Number = %zu", i, i + 1);
+        for (size_t stage = 0; stage < pipeline_depth; ++stage) {
+            used += (size_t)snprintf(source + used, estimated - used, " |> id");
+        }
+        used += (size_t)snprintf(source + used, estimated - used, "\n");
+    }
+    return source;
 }
 
 static void test_parser_and_semantics(void) {
@@ -448,6 +467,69 @@ static void test_stability_checker_cli(void) {
     system(cleanup_cmd);
 }
 
+
+static void test_mocked_semantic_stability_workload(void) {
+    char *source = build_mock_stress_program(120, 24);
+    assert(source != NULL);
+
+    NovaParser parser;
+    nova_parser_init(&parser, source);
+    NovaProgram *program = nova_parser_parse(&parser);
+    assert(program != NULL);
+
+    NovaSemanticContext ctx;
+    nova_semantic_context_init(&ctx);
+    nova_semantic_analyze_program(&ctx, program);
+    assert(ctx.diagnostics.count == 0);
+
+    for (size_t i = 1; i < program->decl_count; ++i) {
+        const NovaFunDecl *fun = &program->decls[i].as.fun_decl;
+        for (size_t repeat = 0; repeat < 40; ++repeat) {
+            const NovaExprInfo *info = nova_semantic_lookup_expr(&ctx, fun->body);
+            assert(info != NULL);
+            assert(info->type == ctx.type_number);
+        }
+    }
+
+    nova_semantic_context_free(&ctx);
+    nova_program_free(program);
+    free(program);
+    nova_parser_free(&parser);
+    free(source);
+}
+
+static void test_performance_regression_smoke(void) {
+    char *source = build_mock_stress_program(220, 18);
+    assert(source != NULL);
+
+    clock_t start = clock();
+    for (size_t run = 0; run < 8; ++run) {
+        NovaParser parser;
+        nova_parser_init(&parser, source);
+        NovaProgram *program = nova_parser_parse(&parser);
+        assert(program != NULL);
+
+        NovaSemanticContext ctx;
+        nova_semantic_context_init(&ctx);
+        nova_semantic_analyze_program(&ctx, program);
+        assert(ctx.diagnostics.count == 0);
+
+        const NovaFunDecl *last_fun = &program->decls[program->decl_count - 1].as.fun_decl;
+        const NovaExprInfo *info = nova_semantic_lookup_expr(&ctx, last_fun->body);
+        assert(info != NULL);
+
+        nova_semantic_context_free(&ctx);
+        nova_program_free(program);
+        free(program);
+        nova_parser_free(&parser);
+    }
+    clock_t end = clock();
+    double elapsed_ms = ((double)(end - start) * 1000.0) / (double)CLOCKS_PER_SEC;
+    printf("performance smoke: %.2fms\n", elapsed_ms);
+
+    free(source);
+}
+
 static void test_examples(void) {
     struct ExampleCheck {
         const char *path;
@@ -475,6 +557,8 @@ int main(void) {
     test_while_loop_codegen();
     test_project_generator();
     test_stability_checker_cli();
+    test_mocked_semantic_stability_workload();
+    test_performance_regression_smoke();
     test_examples();
     printf("All tests passed.\n");
     return 0;
