@@ -537,6 +537,67 @@ static void test_aot_executable_generation(void) {
     nova_parser_free(&parser);
 }
 
+static void test_llvm_backend_codegen(void) {
+    char template[] = "build/nova_llvmXXXXXX";
+    char *dir = make_temp_dir(template);
+    assert(dir != NULL);
+
+    const char *source =
+        "module demo.llvm\n"
+        "fun app_entry(): Number = 9\n";
+
+    NovaParser parser;
+    nova_parser_init(&parser, source);
+    NovaProgram *program = nova_parser_parse(&parser);
+    assert(program != NULL);
+
+    NovaSemanticContext ctx;
+    nova_semantic_context_init(&ctx);
+    nova_semantic_analyze_program(&ctx, program);
+    assert(ctx.diagnostics.count == 0);
+
+    NovaIRProgram *ir = nova_ir_lower(program, &ctx);
+    assert(ir != NULL);
+
+    nova_setenv("NOVA_CODEGEN_BACKEND", "llvm");
+    char object_path[PATH_MAX];
+    snprintf(object_path, sizeof(object_path), "%s/demo.o", dir);
+    char error[256] = {0};
+    bool ok = nova_codegen_emit_object(ir, &ctx, object_path, error, sizeof(error));
+    assert(ok && "LLVM object emission failed");
+
+    struct stat st;
+    assert(stat(object_path, &st) == 0);
+
+    char exe_path[PATH_MAX];
+    snprintf(exe_path, sizeof(exe_path), "%s/demo-bin", dir);
+    ok = nova_codegen_emit_executable(ir, &ctx, exe_path, "app_entry", error, sizeof(error));
+    assert(ok && "LLVM executable emission failed");
+    assert(stat(exe_path, &st) == 0);
+
+#ifndef _WIN32
+    char run_cmd[PATH_MAX * 2];
+    snprintf(run_cmd, sizeof(run_cmd), "%s", exe_path);
+    int rc = system(run_cmd);
+    assert(WIFEXITED(rc));
+    assert(WEXITSTATUS(rc) == 9);
+#endif
+
+    nova_setenv("NOVA_CODEGEN_BACKEND", NULL);
+    remove(object_path);
+    remove(exe_path);
+
+    nova_ir_free(ir);
+    nova_semantic_context_free(&ctx);
+    nova_program_free(program);
+    free(program);
+    nova_parser_free(&parser);
+
+    char cleanup_cmd[PATH_MAX * 2];
+    snprintf(cleanup_cmd, sizeof(cleanup_cmd), "rm -rf %s", dir);
+    system(cleanup_cmd);
+}
+
 static void test_codegen_pipeline(void) {
     const char *source =
         "module demo.codegen\n"
@@ -884,6 +945,7 @@ int main(void) {
     test_match_exhaustiveness_warning();
     test_codegen_uses_low_latency_flags();
     test_aot_executable_generation();
+    test_llvm_backend_codegen();
     test_codegen_pipeline();
     test_ir_lowering_extensions();
     test_ir_control_flow_optimizations();
