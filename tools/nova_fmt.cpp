@@ -9,13 +9,13 @@
 static char *read_all(FILE *in) {
     size_t capacity = 1024;
     size_t length = 0;
-    char *buffer = malloc(capacity);
+    char *buffer = static_cast<char *>(malloc(capacity));
     if (!buffer) return NULL;
     int c;
     while ((c = fgetc(in)) != EOF) {
         if (length + 1 >= capacity) {
             capacity *= 2;
-            char *new_buffer = realloc(buffer, capacity);
+            char *new_buffer = static_cast<char *>(realloc(buffer, capacity));
             if (!new_buffer) {
                 free(buffer);
                 return NULL;

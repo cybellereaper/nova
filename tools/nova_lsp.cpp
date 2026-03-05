@@ -23,7 +23,7 @@ static char *read_file_contents(const char *path) {
         fclose(in);
         return NULL;
     }
-    char *buffer = malloc((size_t)size + 1);
+    char *buffer = static_cast<char *>(malloc((size_t)size + 1));
     if (!buffer) {
         fclose(in);
         return NULL;
@@ -48,7 +48,7 @@ static bool read_message(char **out_json) {
     if (content_length == 0) {
         return false;
     }
-    char *json = malloc(content_length + 1);
+    char *json = static_cast<char *>(malloc(content_length + 1));
     if (!json) {
         return false;
     }

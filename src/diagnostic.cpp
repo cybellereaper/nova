@@ -11,7 +11,7 @@ void nova_diagnostic_list_init(NovaDiagnosticList *list) {
 void nova_diagnostic_list_push(NovaDiagnosticList *list, NovaDiagnostic diagnostic) {
     if (list->count == list->capacity) {
         size_t new_capacity = list->capacity == 0 ? 8 : list->capacity * 2;
-        NovaDiagnostic *new_items = realloc(list->items, new_capacity * sizeof(NovaDiagnostic));
+        NovaDiagnostic *new_items = static_cast<NovaDiagnostic *>(realloc(list->items, new_capacity * sizeof(NovaDiagnostic)));
         if (!new_items) {
             return;
         }
@@ -27,4 +27,3 @@ void nova_diagnostic_list_free(NovaDiagnosticList *list) {
     list->count = 0;
     list->capacity = 0;
 }
-

@@ -34,7 +34,7 @@ int main(void) {
         }
         const char *header = "module repl.session\n";
         size_t source_len = strlen(header) + strlen("let it = ") + strlen(line) + 1;
-        char *source = malloc(source_len);
+        char *source = static_cast<char *>(malloc(source_len));
         if (!source) {
             fprintf(stderr, "allocation failed\n");
             return 1;

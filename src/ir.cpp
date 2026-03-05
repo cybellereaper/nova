@@ -5,7 +5,7 @@
 #include <string.h>
 
 static char *copy_token_text(const NovaToken *token) {
-    char *text = malloc(token->length + 1);
+    char *text = static_cast<char *>(malloc(token->length + 1));
     if (!text) return NULL;
     memcpy(text, token->lexeme, token->length);
     text[token->length] = '\0';
@@ -18,7 +18,7 @@ static bool token_equals_cstr(const NovaToken *token, const char *text) {
 }
 
 static NovaIRExpr *nova_ir_expr_new(NovaIRExprKind kind, NovaTypeId type) {
-    NovaIRExpr *expr = calloc(1, sizeof(NovaIRExpr));
+    NovaIRExpr *expr = static_cast<NovaIRExpr *>(calloc(1, sizeof(NovaIRExpr)));
     if (!expr) return NULL;
     expr->kind = kind;
     expr->type = type;
@@ -79,7 +79,7 @@ static NovaIRExpr *lower_literal(const NovaExpr *expr, const NovaSemanticContext
         if (ir) {
             size_t count = expr->as.literal.elements.count;
             if (count > 0) {
-                ir->as.list.elements = calloc(count, sizeof(NovaIRExpr *));
+                ir->as.list.elements = static_cast<NovaIRExpr **>(calloc(count, sizeof(NovaIRExpr *)));
                 if (!ir->as.list.elements) {
                     nova_ir_expr_free(ir);
                     return NULL;
@@ -112,7 +112,7 @@ static NovaIRExpr *lower_call(const NovaExpr *expr, const NovaSemanticContext *s
     ir->as.call.callee = callee_expr->as.identifier.name;
     ir->as.call.arg_count = expr->as.call.args.count;
     if (ir->as.call.arg_count > 0) {
-        ir->as.call.args = calloc(ir->as.call.arg_count, sizeof(NovaIRExpr *));
+        ir->as.call.args = static_cast<NovaIRExpr **>(calloc(ir->as.call.arg_count, sizeof(NovaIRExpr *)));
         if (!ir->as.call.args) {
             free(ir);
             return NULL;
@@ -197,7 +197,7 @@ static NovaIRExpr *lower_pipeline(const NovaExpr *expr, const NovaSemanticContex
         call->as.call.callee = callee->as.identifier.name;
         size_t arg_count = 1 + args.count;
         call->as.call.arg_count = arg_count;
-        call->as.call.args = calloc(arg_count, sizeof(NovaIRExpr *));
+        call->as.call.args = static_cast<NovaIRExpr **>(calloc(arg_count, sizeof(NovaIRExpr *)));
         if (!call->as.call.args) {
             nova_ir_expr_free(call);
             return NULL;
@@ -227,7 +227,7 @@ static NovaIRExpr *lower_match(const NovaExpr *expr, const NovaSemanticContext *
     size_t arm_count = expr->as.match_expr.arms.count;
     ir->as.match_expr.arm_count = arm_count;
     if (arm_count > 0) {
-        ir->as.match_expr.arms = calloc(arm_count, sizeof(NovaIRMatchArm));
+        ir->as.match_expr.arms = static_cast<NovaIRMatchArm *>(calloc(arm_count, sizeof(NovaIRMatchArm)));
         if (!ir->as.match_expr.arms) {
             nova_ir_expr_free(ir);
             return NULL;
@@ -238,7 +238,7 @@ static NovaIRExpr *lower_match(const NovaExpr *expr, const NovaSemanticContext *
             ir_arm->constructor = arm->name;
             ir_arm->binding_count = arm->bindings.count;
             if (ir_arm->binding_count > 0) {
-                ir_arm->bindings = calloc(ir_arm->binding_count, sizeof(NovaToken));
+                ir_arm->bindings = static_cast<NovaToken *>(calloc(ir_arm->binding_count, sizeof(NovaToken)));
                 if (!ir_arm->bindings) {
                     nova_ir_expr_free(ir);
                     return NULL;
@@ -279,7 +279,7 @@ static NovaIRExpr *lower_expr(const NovaExpr *expr, const NovaSemanticContext *s
         return lower_if(expr, semantics);
     case NOVA_EXPR_WHILE:
         return lower_while(expr, semantics);
-    case NOVA_EXPR_BLOCK:
+    case NOVA_EXPR_BLOCK: {
         if (expr->as.block.expressions.count == 0) {
             return nova_ir_expr_new(NOVA_IR_EXPR_UNIT, semantics->type_unit);
         }
@@ -291,7 +291,7 @@ static NovaIRExpr *lower_expr(const NovaExpr *expr, const NovaSemanticContext *s
         if (!sequence) return NULL;
         size_t count = expr->as.block.expressions.count;
         sequence->as.sequence.count = count;
-        sequence->as.sequence.items = calloc(count, sizeof(NovaIRExpr *));
+        sequence->as.sequence.items = static_cast<NovaIRExpr **>(calloc(count, sizeof(NovaIRExpr *)));
         if (!sequence->as.sequence.items) {
             nova_ir_expr_free(sequence);
             return NULL;
@@ -304,6 +304,7 @@ static NovaIRExpr *lower_expr(const NovaExpr *expr, const NovaSemanticContext *s
             }
         }
         return sequence;
+    }
     case NOVA_EXPR_PAREN:
         return lower_expr(expr->as.inner, semantics);
     case NOVA_EXPR_MATCH:
@@ -496,14 +497,14 @@ static void nova_ir_function_free(NovaIRFunction *fn) {
 }
 
 NovaIRProgram *nova_ir_lower(const NovaProgram *program, const NovaSemanticContext *semantics) {
-    NovaIRProgram *ir = calloc(1, sizeof(NovaIRProgram));
+    NovaIRProgram *ir = static_cast<NovaIRProgram *>(calloc(1, sizeof(NovaIRProgram)));
     if (!ir) return NULL;
     for (size_t i = 0; i < program->decl_count; ++i) {
         const NovaDecl *decl = &program->decls[i];
         if (decl->kind != NOVA_DECL_FUN) continue;
         if (ir->function_count == ir->function_capacity) {
             size_t new_capacity = ir->function_capacity == 0 ? 4 : ir->function_capacity * 2;
-            NovaIRFunction *functions = realloc(ir->functions, new_capacity * sizeof(NovaIRFunction));
+            NovaIRFunction *functions = static_cast<NovaIRFunction *>(realloc(ir->functions, new_capacity * sizeof(NovaIRFunction)));
             if (!functions) {
                 continue;
             }
@@ -515,7 +516,7 @@ NovaIRProgram *nova_ir_lower(const NovaProgram *program, const NovaSemanticConte
         fn->name = decl->as.fun_decl.name;
         fn->param_count = decl->as.fun_decl.params.count;
         if (fn->param_count > 0) {
-            fn->params = calloc(fn->param_count, sizeof(NovaIRParam));
+            fn->params = static_cast<NovaIRParam *>(calloc(fn->param_count, sizeof(NovaIRParam)));
             for (size_t p = 0; p < fn->param_count; ++p) {
                 fn->params[p].name = decl->as.fun_decl.params.items[p].name;
                 if (decl->as.fun_decl.params.items[p].has_type) {

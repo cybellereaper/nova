@@ -60,7 +60,7 @@ static bool ensure_root_capacity(NovaGC *gc, size_t needed) {
     while (next_capacity < needed) {
         next_capacity *= 2;
     }
-    void ***next = gc->alloc(gc->alloc_ctx, next_capacity * sizeof(void **));
+    void ***next = static_cast<void ***>(gc->alloc(gc->alloc_ctx, next_capacity * sizeof(void **)));
     if (!next) {
         return false;
     }
@@ -81,7 +81,7 @@ static bool ensure_mark_capacity(NovaGC *gc, size_t needed) {
     while (next_capacity < needed) {
         next_capacity *= 2;
     }
-    NovaGCObject **next = gc->alloc(gc->alloc_ctx, next_capacity * sizeof(NovaGCObject *));
+    NovaGCObject **next = static_cast<NovaGCObject **>(gc->alloc(gc->alloc_ctx, next_capacity * sizeof(NovaGCObject *)));
     if (!next) {
         return false;
     }
@@ -181,7 +181,7 @@ NovaGC *nova_gc_create(const NovaGCConfig *config) {
         }
     }
 
-    NovaGC *gc = alloc(ctx, sizeof(NovaGC));
+    NovaGC *gc = static_cast<NovaGC *>(alloc(ctx, sizeof(NovaGC)));
     if (!gc) {
         return NULL;
     }
@@ -223,7 +223,7 @@ void *nova_gc_alloc(NovaGC *gc,
     }
 
     size_t total = sizeof(NovaGCObject) + payload_size;
-    NovaGCObject *object = gc->alloc(gc->alloc_ctx, total);
+    NovaGCObject *object = static_cast<NovaGCObject *>(gc->alloc(gc->alloc_ctx, total));
     if (!object) {
         return NULL;
     }

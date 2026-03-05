@@ -20,7 +20,7 @@ void nova_param_list_init(NovaParamList *list) {
 
 void nova_param_list_push(NovaParamList *list, NovaParam param) {
     if (list->count == list->capacity) {
-        NovaParam *items = nova_grow(list->items, &list->capacity, sizeof(NovaParam));
+        NovaParam *items = static_cast<NovaParam *>(nova_grow(list->items, &list->capacity, sizeof(NovaParam)));
         if (!items) {
             return;
         }
@@ -44,7 +44,7 @@ void nova_arg_list_init(NovaArgList *list) {
 
 void nova_arg_list_push(NovaArgList *list, NovaArg arg) {
     if (list->count == list->capacity) {
-        NovaArg *items = nova_grow(list->items, &list->capacity, sizeof(NovaArg));
+        NovaArg *items = static_cast<NovaArg *>(nova_grow(list->items, &list->capacity, sizeof(NovaArg)));
         if (!items) {
             return;
         }
@@ -68,7 +68,7 @@ void nova_expr_list_init(NovaExprList *list) {
 
 void nova_expr_list_push(NovaExprList *list, NovaExpr *expr) {
     if (list->count == list->capacity) {
-        NovaExpr **items = nova_grow(list->items, &list->capacity, sizeof(NovaExpr *));
+        NovaExpr **items = static_cast<NovaExpr **>(nova_grow(list->items, &list->capacity, sizeof(NovaExpr *)));
         if (!items) {
             return;
         }
@@ -92,7 +92,7 @@ void nova_match_arm_list_init(NovaMatchArmList *list) {
 
 void nova_match_arm_list_push(NovaMatchArmList *list, NovaMatchArm arm) {
     if (list->count == list->capacity) {
-        NovaMatchArm *items = nova_grow(list->items, &list->capacity, sizeof(NovaMatchArm));
+        NovaMatchArm *items = static_cast<NovaMatchArm *>(nova_grow(list->items, &list->capacity, sizeof(NovaMatchArm)));
         if (!items) {
             return;
         }
@@ -119,7 +119,7 @@ void nova_variant_list_init(NovaVariantList *list) {
 
 void nova_variant_list_push(NovaVariantList *list, NovaVariantDecl variant) {
     if (list->count == list->capacity) {
-        NovaVariantDecl *items = nova_grow(list->items, &list->capacity, sizeof(NovaVariantDecl));
+        NovaVariantDecl *items = static_cast<NovaVariantDecl *>(nova_grow(list->items, &list->capacity, sizeof(NovaVariantDecl)));
         if (!items) {
             return;
         }
@@ -146,7 +146,7 @@ void nova_module_path_init(NovaModulePath *path) {
 
 void nova_module_path_push(NovaModulePath *path, NovaToken segment) {
     if (path->count == path->capacity) {
-        NovaToken *segments = nova_grow(path->segments, &path->capacity, sizeof(NovaToken));
+        NovaToken *segments = static_cast<NovaToken *>(nova_grow(path->segments, &path->capacity, sizeof(NovaToken)));
         if (!segments) {
             return;
         }
@@ -249,7 +249,7 @@ void nova_program_init(NovaProgram *program) {
 
 void nova_program_add_import(NovaProgram *program, NovaImportDecl import) {
     if (program->import_count == program->import_capacity) {
-        NovaImportDecl *imports = nova_grow(program->imports, &program->import_capacity, sizeof(NovaImportDecl));
+        NovaImportDecl *imports = static_cast<NovaImportDecl *>(nova_grow(program->imports, &program->import_capacity, sizeof(NovaImportDecl)));
         if (!imports) {
             return;
         }
@@ -260,7 +260,7 @@ void nova_program_add_import(NovaProgram *program, NovaImportDecl import) {
 
 void nova_program_add_decl(NovaProgram *program, NovaDecl decl) {
     if (program->decl_count == program->decl_capacity) {
-        NovaDecl *decls = nova_grow(program->decls, &program->decl_capacity, sizeof(NovaDecl));
+        NovaDecl *decls = static_cast<NovaDecl *>(nova_grow(program->decls, &program->decl_capacity, sizeof(NovaDecl)));
         if (!decls) {
             return;
         }

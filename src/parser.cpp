@@ -89,7 +89,7 @@ static NovaToken consume(NovaParser *parser, NovaTokenType type, const char *mes
 }
 
 static NovaExpr *nova_expr_new(NovaExprKind kind, NovaToken start) {
-    NovaExpr *expr = calloc(1, sizeof(NovaExpr));
+    NovaExpr *expr = static_cast<NovaExpr *>(calloc(1, sizeof(NovaExpr)));
     if (!expr) {
         return NULL;
     }
@@ -467,7 +467,7 @@ static NovaImportDecl parse_import_decl(NovaParser *parser) {
         while (!check(parser, NOVA_TOKEN_RBRACE) && !is_at_end(parser)) {
             if (decl.symbol_count == decl.symbol_capacity) {
                 size_t new_capacity = decl.symbol_capacity == 0 ? 4 : decl.symbol_capacity * 2;
-                NovaToken *symbols = realloc(decl.symbols, new_capacity * sizeof(NovaToken));
+                NovaToken *symbols = static_cast<NovaToken *>(realloc(decl.symbols, new_capacity * sizeof(NovaToken)));
                 if (!symbols) {
                     break;
                 }
@@ -536,21 +536,33 @@ static NovaTypeDecl parse_type_decl(NovaParser *parser) {
 
 static NovaDecl parse_decl(NovaParser *parser) {
     NovaToken token = peek(parser);
+
     if (token.type == NOVA_TOKEN_TYPE) {
-        NovaTypeDecl type_decl = parse_type_decl(parser);
-        return (NovaDecl){ .kind = NOVA_DECL_TYPE, .as.type_decl = type_decl };
+        NovaDecl decl = {};
+        decl.kind = NOVA_DECL_TYPE;
+        decl.as.type_decl = parse_type_decl(parser);
+        return decl;
     }
+
     if (token.type == NOVA_TOKEN_FUN) {
-        NovaFunDecl fun_decl = parse_fun_decl(parser);
-        return (NovaDecl){ .kind = NOVA_DECL_FUN, .as.fun_decl = fun_decl };
+        NovaDecl decl = {};
+        decl.kind = NOVA_DECL_FUN;
+        decl.as.fun_decl = parse_fun_decl(parser);
+        return decl;
     }
+
     if (token.type == NOVA_TOKEN_LET) {
-        NovaLetDecl let_decl = parse_let_decl(parser);
-        return (NovaDecl){ .kind = NOVA_DECL_LET, .as.let_decl = let_decl };
+        NovaDecl decl = {};
+        decl.kind = NOVA_DECL_LET;
+        decl.as.let_decl = parse_let_decl(parser);
+        return decl;
     }
+
     parser_error(parser, token, "unexpected top-level declaration");
     synchronize(parser);
-    return (NovaDecl){ .kind = NOVA_DECL_LET };
+    NovaDecl fallback = {};
+    fallback.kind = NOVA_DECL_LET;
+    return fallback;
 }
 
 void nova_parser_init(NovaParser *parser, const char *source) {
@@ -563,7 +575,7 @@ void nova_parser_init(NovaParser *parser, const char *source) {
 }
 
 NovaProgram *nova_parser_parse(NovaParser *parser) {
-    NovaProgram *program = calloc(1, sizeof(NovaProgram));
+    NovaProgram *program = static_cast<NovaProgram *>(calloc(1, sizeof(NovaProgram)));
     if (!program) {
         return NULL;
     }

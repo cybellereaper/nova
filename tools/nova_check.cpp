@@ -40,7 +40,7 @@ static char *read_file_contents(const char *path) {
         fclose(file);
         return NULL;
     }
-    char *buffer = malloc((size_t)size + 1);
+    char *buffer = static_cast<char *>(malloc((size_t)size + 1));
     if (!buffer) {
         fclose(file);
         return NULL;

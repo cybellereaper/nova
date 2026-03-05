@@ -1,7 +1,7 @@
 # NovaLang Toolchain Bootstrap
 
 This repository contains an ANTLR4 grammar (`nova.g4`) for the NovaLang surface
-syntax and now includes a C-based toolchain prototype. The codebase covers
+syntax and now includes a C++-based toolchain prototype. The codebase covers
 lexing, parsing, semantic analysis with type inference and effect tracking, a
 typed intermediate representation, native code generation, and lightweight
 developer tooling.
@@ -14,23 +14,23 @@ developer tooling.
   metadata from `nova.g4` and emits `include/nova/generated_tokens.h`, ensuring
   the handwritten lexer stays aligned with the grammar.
 * `include/` & `src/` — C headers and implementations for:
-  * Token infrastructure (`nova/token.h`, `src/token.c`).
-  * Lexer (`nova/lexer.h`, `src/lexer.c`) translating NovaLang source into a
+  * Token infrastructure (`nova/token.h`, `src/token.cpp`).
+  * Lexer (`nova/lexer.h`, `src/lexer.cpp`) translating NovaLang source into a
     stream of `NovaToken` structures.
-  * Expanded AST data structures (`nova/ast.h`, `src/ast.c`) that faithfully
+  * Expanded AST data structures (`nova/ast.h`, `src/ast.cpp`) that faithfully
     capture variants, match arms, pipelines, async/await, blocks, and literal
     forms described in `nova.g4`.
-  * A fault-tolerant recursive-descent parser (`nova/parser.h`, `src/parser.c`)
+  * A fault-tolerant recursive-descent parser (`nova/parser.h`, `src/parser.cpp`)
     with diagnostics and recovery that mirrors the grammar and produces a
     `NovaProgram` tree.
-  * A richer semantic analysis engine (`nova/semantic.h`, `src/semantic.c`)
+  * A richer semantic analysis engine (`nova/semantic.h`, `src/semantic.cpp`)
     featuring scope management, type inference, effect tracking, variant
     exhaustiveness checking, and per-expression type/effect metadata.
-  * A typed intermediate representation (`nova/ir.h`, `src/ir.c`) lowered from
+  * A typed intermediate representation (`nova/ir.h`, `src/ir.cpp`) lowered from
     the AST with help from semantic results.
   * A low-latency incremental mark/sweep garbage collector runtime (`nova/gc.h`,
-    `src/gc.c`) with pluggable allocators for performance tuning and tests.
-  * A native code generator (`nova/codegen.h`, `src/codegen.c`) that emits C
+    `src/gc.cpp`) with pluggable allocators for performance tuning and tests.
+  * A native code generator (`nova/codegen.h`, `src/codegen.cpp`) that emits C
     and drives the system compiler to produce object files.
 * Developer tooling under `tools/`:
   * `nova-fmt` — simple formatter that reflows NovaLang source while validating
@@ -46,9 +46,9 @@ developer tooling.
   semantics.
 * `examples/` — small NovaLang programs that exercise pipelines, matches, and
   loops.
-* `tests/parser_tests.c` — end-to-end tests that cover parsing, semantics,
+* `tests/parser_tests.cpp` — end-to-end tests that cover parsing, semantics,
   exhaustiveness warnings, IR generation, and native code emission.
-* `Makefile` — builds tests and developer tools with `gcc`.
+* `Makefile` — builds a reusable static library plus tests/tools with `g++` for faster incremental builds.
 
 ## Running the Tests
 
@@ -81,6 +81,16 @@ point, but you can override that with `--entry`:
 The native backend uses an aggressive low-latency profile (`-O3 -flto
 -fno-plt -fomit-frame-pointer -DNDEBUG`) and supports overriding the compiler
 binary through the `NOVA_CC` environment variable.
+
+The Makefile supports `NOVA_COMPAT=0` for stricter C++ builds (disabling `-fpermissive`) once all legacy C-style conversions are eliminated.
+
+The Makefile also uses per-file dependency generation (`-MMD -MP`) so incremental rebuilds are both faster and more reliable after header edits.
+
+You can run a strict C++ conformance build (without compatibility mode) using:
+
+```
+make strict
+```
 
 The test suite parses representative NovaLang snippets, runs semantic analysis
 to validate inference and diagnostics, lowers to the intermediate
