@@ -1,6 +1,5 @@
 #include "nova/parser.h"
 
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,14 +9,18 @@ static NovaExpr *parse_block_expression(NovaParser *parser);
 
 static NovaToken peek(const NovaParser *parser) {
     if (parser->current >= parser->tokens.size) {
-        return (NovaToken){ .type = NOVA_TOKEN_EOF };
+        NovaToken token{};
+        token.type = NOVA_TOKEN_EOF;
+        return token;
     }
     return parser->tokens.data[parser->current];
 }
 
 static NovaToken previous(const NovaParser *parser) {
     if (parser->current == 0) {
-        return (NovaToken){ .type = NOVA_TOKEN_EOF };
+        NovaToken token{};
+        token.type = NOVA_TOKEN_EOF;
+        return token;
     }
     return parser->tokens.data[parser->current - 1];
 }
@@ -43,7 +46,7 @@ static void parser_error(NovaParser *parser, NovaToken token, const char *messag
     }
     parser->panic_mode = true;
     parser->had_error = true;
-    nova_diagnostic_list_push(&parser->diagnostics, (NovaDiagnostic){
+    nova_diagnostic_list_push(&parser->diagnostics, NovaDiagnostic{
         .token = token,
         .message = message,
         .severity = NOVA_DIAGNOSTIC_ERROR,
@@ -85,7 +88,10 @@ static NovaToken consume(NovaParser *parser, NovaTokenType type, const char *mes
         return advance(parser);
     }
     parser_error(parser, peek(parser), message);
-    return (NovaToken){ .type = NOVA_TOKEN_ERROR, .lexeme = message };
+    NovaToken token{};
+    token.type = NOVA_TOKEN_ERROR;
+    token.lexeme = message;
+    return token;
 }
 
 static NovaExpr *nova_expr_new(NovaExprKind kind, NovaToken start) {
@@ -129,7 +135,9 @@ static bool lookahead_lambda(const NovaParser *parser) {
 
 static NovaParam parse_param(NovaParser *parser) {
     NovaToken name = consume(parser, NOVA_TOKEN_IDENTIFIER, "expected parameter name");
-    NovaParam param = { .name = name, .has_type = false };
+    NovaParam param{};
+    param.name = name;
+    param.has_type = false;
     if (match(parser, NOVA_TOKEN_COLON)) {
         param.has_type = true;
         param.type_name = consume(parser, NOVA_TOKEN_IDENTIFIER, "expected type name");
@@ -158,7 +166,9 @@ static NovaArgList parse_argument_list(NovaParser *parser) {
     nova_arg_list_init(&list);
     if (!check(parser, NOVA_TOKEN_RPAREN)) {
         while (true) {
-            NovaArg arg = { .has_label = false, .value = NULL };
+            NovaArg arg{};
+            arg.has_label = false;
+            arg.value = NULL;
             if (check(parser, NOVA_TOKEN_IDENTIFIER)) {
                 NovaToken potential = peek(parser);
                 NovaTokenType next_type = NOVA_TOKEN_EOF;

@@ -161,6 +161,13 @@ static char *make_temp_dir(char *path_template) {
     return NULL;
 }
 
+static void cleanup_dir(const char *dir) {
+    char cleanup_cmd[PATH_MAX * 2];
+    snprintf(cleanup_cmd, sizeof(cleanup_cmd), "rm -rf %s", dir);
+    int rc = system(cleanup_cmd);
+    assert(rc == 0);
+}
+
 
 static char *build_mock_stress_program(size_t function_count, size_t pipeline_depth) {
     size_t estimated = 64 + function_count * (pipeline_depth * 20 + 80);
@@ -246,10 +253,9 @@ static void test_gc_preserves_reachable_objects(void) {
 }
 
 static void test_gc_incremental_steps(void) {
-    NovaGCConfig config = {
-        .initial_threshold_bytes = 64,
-        .growth_percent = 100,
-    };
+    NovaGCConfig config{};
+    config.initial_threshold_bytes = 64;
+    config.growth_percent = 100;
     NovaGC *gc = nova_gc_create(&config);
     assert(gc != NULL);
 
@@ -281,13 +287,12 @@ static void test_gc_incremental_steps(void) {
 }
 
 static void test_gc_mock_allocator_and_failure(void) {
-    MockAllocator allocator = {0};
-    NovaGCConfig config = {
-        .alloc = mock_alloc,
-        .free = mock_free,
-        .ctx = &allocator,
-        .initial_threshold_bytes = 32,
-    };
+    MockAllocator allocator{};
+    NovaGCConfig config{};
+    config.alloc = mock_alloc;
+    config.free = mock_free;
+    config.ctx = &allocator;
+    config.initial_threshold_bytes = 32;
 
     NovaGC *gc = nova_gc_create(&config);
     assert(gc != NULL);
@@ -335,6 +340,24 @@ static void test_parser_and_semantics(void) {
     assert((later_info->effects & NOVA_EFFECT_ASYNC) != 0);
 
     nova_semantic_context_free(&ctx);
+    nova_program_free(program);
+    free(program);
+    nova_parser_free(&parser);
+}
+
+static void test_parser_reports_recoverable_errors(void) {
+    const char *source =
+        "module demo.err\n"
+        "fun broken(: Number): Number = 1\n";
+
+    NovaParser parser;
+    nova_parser_init(&parser, source);
+    NovaProgram *program = nova_parser_parse(&parser);
+    assert(program != NULL);
+    assert(parser.had_error);
+    assert(parser.diagnostics.count > 0);
+    assert(parser.diagnostics.items[0].severity == NOVA_DIAGNOSTIC_ERROR);
+
     nova_program_free(program);
     free(program);
     nova_parser_free(&parser);
@@ -491,9 +514,7 @@ static void test_codegen_uses_low_latency_flags(void) {
     free(program);
     nova_parser_free(&parser);
 
-    char cleanup_cmd[PATH_MAX * 2];
-    snprintf(cleanup_cmd, sizeof(cleanup_cmd), "rm -rf %s", dir);
-    system(cleanup_cmd);
+    cleanup_dir(dir);
 }
 
 static void test_aot_executable_generation(void) {
@@ -593,9 +614,7 @@ static void test_llvm_backend_codegen(void) {
     free(program);
     nova_parser_free(&parser);
 
-    char cleanup_cmd[PATH_MAX * 2];
-    snprintf(cleanup_cmd, sizeof(cleanup_cmd), "rm -rf %s", dir);
-    system(cleanup_cmd);
+    cleanup_dir(dir);
 }
 
 
@@ -836,9 +855,7 @@ static void test_project_generator(void) {
     nova_parser_free(&parser);
     free(source);
 
-    char cleanup_cmd[PATH_MAX * 2];
-    snprintf(cleanup_cmd, sizeof(cleanup_cmd), "rm -rf %s", project_dir);
-    system(cleanup_cmd);
+    cleanup_dir(project_dir);
 }
 
 static void test_while_loop_codegen(void) {
@@ -902,9 +919,7 @@ static void test_stability_checker_cli(void) {
     int rc = system(command);
     assert(rc == 0);
 
-    char cleanup_cmd[PATH_MAX * 2];
-    snprintf(cleanup_cmd, sizeof(cleanup_cmd), "rm -rf %s", check_dir);
-    system(cleanup_cmd);
+    cleanup_dir(check_dir);
 }
 
 
@@ -993,6 +1008,7 @@ int main(void) {
     test_gc_incremental_steps();
     test_gc_mock_allocator_and_failure();
     test_parser_and_semantics();
+    test_parser_reports_recoverable_errors();
     test_lexer_keyword_classification();
     test_lexer_large_input_tokenization();
     test_match_exhaustiveness_warning();

@@ -345,7 +345,9 @@ static void optimize_ir_expr(NovaIRExpr **expr_ptr) {
         }
         if (expr->as.sequence.count == 0) {
             free(expr->as.sequence.items);
-            NovaIRExpr temp = { .kind = NOVA_IR_EXPR_UNIT, .type = expr->type };
+            NovaIRExpr temp{};
+            temp.kind = NOVA_IR_EXPR_UNIT;
+            temp.type = expr->type;
             *expr = temp;
         } else if (expr->as.sequence.count == 1) {
             NovaIRExpr *only = expr->as.sequence.items[0];

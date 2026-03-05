@@ -1,7 +1,7 @@
 CXX ?= g++
 AR ?= ar
 CPPFLAGS ?= -Iinclude
-CXXFLAGS ?= -std=c++20 -O2 -Wall -Wextra -Wpedantic
+CXXFLAGS ?= -std=c++23 -O2 -Wall -Wextra -Wpedantic
 LDFLAGS ?=
 LDLIBS ?=
 

@@ -1,6 +1,5 @@
 #include "nova/semantic.h"
 
-#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
@@ -24,6 +23,20 @@ static inline void merge_effects(NovaEffectMask *target, NovaEffectMask value) {
     if (target) {
         *target = effect_or(*target, value);
     }
+}
+
+static NovaScopeEntry scope_entry_make(NovaToken name, NovaTypeId type, NovaEffectMask effects) {
+    NovaScopeEntry entry{};
+    entry.name = name;
+    entry.type = type;
+    entry.effects = effects;
+    return entry;
+}
+
+static NovaTypeInfo type_info_make(NovaTypeKind kind) {
+    NovaTypeInfo info{};
+    info.kind = kind;
+    return info;
 }
 
 static NovaScope *scope_push(NovaScope *parent) {
@@ -55,7 +68,7 @@ static NovaScopeEntry *scope_lookup(const NovaScope *scope, const NovaToken *nam
 }
 
 static void diagnostics_error(NovaSemanticContext *ctx, NovaToken token, const char *message) {
-    nova_diagnostic_list_push(&ctx->diagnostics, (NovaDiagnostic){
+    nova_diagnostic_list_push(&ctx->diagnostics, NovaDiagnostic{
         .token = token,
         .message = message,
         .severity = NOVA_DIAGNOSTIC_ERROR,
@@ -63,7 +76,7 @@ static void diagnostics_error(NovaSemanticContext *ctx, NovaToken token, const c
 }
 
 static void diagnostics_warning(NovaSemanticContext *ctx, NovaToken token, const char *message) {
-    nova_diagnostic_list_push(&ctx->diagnostics, (NovaDiagnostic){
+    nova_diagnostic_list_push(&ctx->diagnostics, NovaDiagnostic{
         .token = token,
         .message = message,
         .severity = NOVA_DIAGNOSTIC_WARNING,
@@ -199,7 +212,7 @@ static void expr_info_list_record(NovaSemanticContext *ctx, const NovaExpr *expr
         list->capacity = new_capacity;
     }
     size_t index = list->count;
-    list->items[list->count++] = (NovaExprInfo){ .expr = expr, .type = type, .effects = effects };
+    list->items[list->count++] = NovaExprInfo{ .expr = expr, .type = type, .effects = effects };
     expr_index_insert(ctx, expr, index);
 }
 
@@ -344,23 +357,17 @@ static void register_type_decl(NovaSemanticContext *ctx, const NovaTypeDecl *dec
                 }
                 NovaTypeId fn_type = type_function(ctx, params, variant->payload.count, record->type_id, NOVA_EFFECT_NONE);
                 free(params);
-                scope_define(ctx, ctx->scope, (NovaScopeEntry){
-                    .name = variant->name,
-                    .type = fn_type,
-                    .effects = NOVA_EFFECT_NONE,
-                    .is_constructor = true,
-                    .type_record = record,
-                    .variant_decl = variant,
-                });
+                NovaScopeEntry entry = scope_entry_make(variant->name, fn_type, NOVA_EFFECT_NONE);
+                entry.is_constructor = true;
+                entry.type_record = record;
+                entry.variant_decl = variant;
+                scope_define(ctx, ctx->scope, entry);
             } else {
-                scope_define(ctx, ctx->scope, (NovaScopeEntry){
-                    .name = variant->name,
-                    .type = record->type_id,
-                    .effects = NOVA_EFFECT_NONE,
-                    .is_constructor = true,
-                    .type_record = record,
-                    .variant_decl = variant,
-                });
+                NovaScopeEntry entry = scope_entry_make(variant->name, record->type_id, NOVA_EFFECT_NONE);
+                entry.is_constructor = true;
+                entry.type_record = record;
+                entry.variant_decl = variant;
+                scope_define(ctx, ctx->scope, entry);
             }
         }
     } else {
@@ -566,11 +573,10 @@ static NovaTypeId analyze_match(NovaSemanticContext *ctx, NovaScope *scope, cons
                         if (variant_decl->payload.items[p].has_type) {
                             bind_type = resolve_type_token(ctx, &variant_decl->payload.items[p].type_name);
                         }
-                        scope_define(ctx, arm_scope, (NovaScopeEntry){
-                            .name = arm->bindings.items[p].name,
-                            .type = bind_type,
-                            .effects = NOVA_EFFECT_NONE,
-                        });
+                        scope_define(ctx, arm_scope,
+                                     scope_entry_make(arm->bindings.items[p].name,
+                                                      bind_type,
+                                                      NOVA_EFFECT_NONE));
                     }
                 }
             }
@@ -632,11 +638,10 @@ static NovaTypeId analyze_lambda(NovaSemanticContext *ctx, NovaScope *scope, con
             param_type = resolve_type_token(ctx, &expr->as.lambda.params.items[i].type_name);
         }
         if (param_types) param_types[i] = param_type;
-        scope_define(ctx, lambda_scope, (NovaScopeEntry){
-            .name = expr->as.lambda.params.items[i].name,
-            .type = param_type,
-            .effects = NOVA_EFFECT_NONE,
-        });
+        scope_define(ctx, lambda_scope,
+                     scope_entry_make(expr->as.lambda.params.items[i].name,
+                                      param_type,
+                                      NOVA_EFFECT_NONE));
     }
     NovaEffectMask body_effects = NOVA_EFFECT_NONE;
     NovaTypeId body_type = analyze_expr(ctx, lambda_scope, expr->as.lambda.body, &body_effects);
@@ -708,11 +713,7 @@ static void analyze_let(NovaSemanticContext *ctx, NovaScope *scope, const NovaLe
         NovaTypeId annotation = resolve_type_token(ctx, &decl->type_name);
         value_type = unify_types(ctx, annotation, value_type, decl->type_name);
     }
-    scope_define(ctx, scope, (NovaScopeEntry){
-        .name = decl->name,
-        .type = value_type,
-        .effects = effects,
-    });
+    scope_define(ctx, scope, scope_entry_make(decl->name, value_type, effects));
 }
 
 static void analyze_fun(NovaSemanticContext *ctx, NovaScope *scope, const NovaFunDecl *decl) {
@@ -732,18 +733,13 @@ static void analyze_fun(NovaSemanticContext *ctx, NovaScope *scope, const NovaFu
         return_type = resolve_type_token(ctx, &decl->return_type);
     }
     NovaTypeId function_type = type_function(ctx, param_types, decl->params.count, return_type, NOVA_EFFECT_NONE);
-    scope_define(ctx, scope, (NovaScopeEntry){
-        .name = decl->name,
-        .type = function_type,
-        .effects = NOVA_EFFECT_NONE,
-    });
+    scope_define(ctx, scope, scope_entry_make(decl->name, function_type, NOVA_EFFECT_NONE));
     NovaScope *fn_scope = scope_push(scope);
     for (size_t i = 0; i < decl->params.count; ++i) {
-        scope_define(ctx, fn_scope, (NovaScopeEntry){
-            .name = decl->params.items[i].name,
-            .type = param_types[i],
-            .effects = NOVA_EFFECT_NONE,
-        });
+        scope_define(ctx, fn_scope,
+                     scope_entry_make(decl->params.items[i].name,
+                                      param_types[i],
+                                      NOVA_EFFECT_NONE));
     }
     NovaEffectMask body_effects = NOVA_EFFECT_NONE;
     NovaTypeId body_type = analyze_expr(ctx, fn_scope, decl->body, &body_effects);
@@ -765,11 +761,11 @@ void nova_semantic_context_init(NovaSemanticContext *ctx) {
     ctx->expr_index_values = NULL;
     ctx->expr_index_count = 0;
     ctx->expr_index_capacity = 0;
-    ctx->type_unknown = type_pool_add(ctx, (NovaTypeInfo){ .kind = NOVA_TYPE_KIND_UNKNOWN });
-    ctx->type_unit = type_pool_add(ctx, (NovaTypeInfo){ .kind = NOVA_TYPE_KIND_UNIT });
-    ctx->type_number = type_pool_add(ctx, (NovaTypeInfo){ .kind = NOVA_TYPE_KIND_NUMBER });
-    ctx->type_string = type_pool_add(ctx, (NovaTypeInfo){ .kind = NOVA_TYPE_KIND_STRING });
-    ctx->type_bool = type_pool_add(ctx, (NovaTypeInfo){ .kind = NOVA_TYPE_KIND_BOOL });
+    ctx->type_unknown = type_pool_add(ctx, type_info_make(NOVA_TYPE_KIND_UNKNOWN));
+    ctx->type_unit = type_pool_add(ctx, type_info_make(NOVA_TYPE_KIND_UNIT));
+    ctx->type_number = type_pool_add(ctx, type_info_make(NOVA_TYPE_KIND_NUMBER));
+    ctx->type_string = type_pool_add(ctx, type_info_make(NOVA_TYPE_KIND_STRING));
+    ctx->type_bool = type_pool_add(ctx, type_info_make(NOVA_TYPE_KIND_BOOL));
 }
 
 void nova_semantic_context_free(NovaSemanticContext *ctx) {
